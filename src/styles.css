@@ -25,6 +25,26 @@ header.top p{font-size:12px;color:var(--sub)}
 .btn-ok{background:var(--ok);color:#fff;width:100%;box-shadow:0 4px 14px rgba(27,171,99,.3)}
 .btn-ok:hover{background:#159455}
 #examCfg{margin-top:0}
+/* ---- 组卷设置：动态题型行 ---- */
+.ec-note{font-size:12.5px;color:var(--sub);background:#f3f5f8;border:1px dashed var(--line);
+  border-radius:10px;padding:9px 12px;margin-bottom:10px;line-height:1.6}
+.ec-row{align-items:center}
+.ec-row .ec-info{flex:1;min-width:0}
+.ec-row .hint b{color:var(--brand);font-weight:700}
+.ec-mini{border:1.5px solid var(--line);background:#fff;color:var(--sub);border-radius:9px;cursor:pointer;
+  font-size:14px;font-weight:700;line-height:1;padding:0;height:34px;min-width:34px;
+  display:inline-flex;align-items:center;justify-content:center;transition:.15s}
+.ec-mini:hover{border-color:#c7d4f5;color:var(--brand)}
+.ec-mini:active{transform:scale(.94)}
+.ec-max{font-size:12px;font-weight:600;padding:0 9px;min-width:auto;color:var(--brand);background:var(--brand-soft);border-color:var(--brand-soft)}
+.ec-actions{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 12px}
+.ec-sum{font-size:13px;color:var(--sub);text-align:right;line-height:1.7;margin-top:2px}
+.ec-sum b{color:var(--ink);font-size:15px}
+.ec-sum .muted{margin-left:4px}
+.ec-warn{font-size:12.5px;line-height:1.7;color:#8a6d00;background:#fff8e1;border:1px solid #ffe08a;
+  border-radius:10px;padding:9px 12px;margin-top:8px}
+.ec-saved{font-size:12px;color:var(--ok);margin-top:8px;line-height:1.6}
+.ec-saved:empty{display:none}
 .section h2{font-size:14px;color:var(--sub);font-weight:600;margin-bottom:10px;letter-spacing:.3px}
 .mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .mode{border:1.5px solid var(--line);border-radius:14px;padding:16px;cursor:pointer;transition:.15s;background:#fff}
@@ -176,6 +196,15 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
   .opt-row .lbl{font-size:13.5px}
   .opt-row .hint{font-size:11px}
   .num-row{gap:8px}
+  /* 组卷题型行：窄屏把「− 输入 + 全部」独占一行右对齐，避免被题型名挤变形 */
+  .ec-row{flex-wrap:wrap;row-gap:8px}
+  .ec-row .ec-info{width:100%;flex:1 1 100%}
+  .ec-row .num-row{width:100%;justify-content:flex-end;gap:7px}
+  .ec-row .ec-num{width:74px}
+  .ec-mini{height:38px;min-width:38px}
+  .ec-max{min-width:auto;padding:0 12px}
+  .ec-sum{text-align:left}
+  .ec-actions .btn{flex:1 1 calc(50% - 4px)}
   input[type=number]{width:72px;padding:9px 8px;font-size:15px}
   .btn{padding:14px 14px}
   .btn-sm{padding:12px 10px;font-size:14px}

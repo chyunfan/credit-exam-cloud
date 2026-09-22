@@ -1,6 +1,6 @@
 import { initAuth, getSession, getUsername, logout } from './auth.js';
 import { initBanks, renderBanks, openBankById } from './banks.js';
-import { setQuestions, initEngine, refreshHomeUI, syncPrefsFromCloud } from './engine.js';
+import { setQuestions, initEngine, refreshHomeUI, syncPrefsFromCloud, setBankKey } from './engine.js';
 import { loadBankState } from './store.js';
 
 const APP_SCREENS = ['banks', 'home', 'practice', 'result'];
@@ -32,6 +32,7 @@ async function handleOpenBank({ id, name, questions }) {
   // 先等该题库的错题/收藏/进度加载完成，再渲染首页，避免计数与续做横幅用到旧题库的数据
   await loadBankState(id, true);
   setQuestions(questions);
+  setBankKey(id);        // 切换题库 → 带出该题库自己的组卷配置（没存过则给标准配置）
   document.getElementById('topBankName').textContent = name;
   document.getElementById('topUser').textContent = getUsername() || '已登录';
   showScreen('home');

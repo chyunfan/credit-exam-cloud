@@ -71,13 +71,42 @@ export function setBankKey(id) {
   renderExamCfg(true);
 }
 
+/**
+ * 载入当前题库的组卷配置。
+ *  · 该题库存过配置 → 原样带出（含用户改大的量，超量时由黄色提醒说明）；
+ *  · 没存过（新导入的题库）→ 给一套"标准 100 分"配置，并按题库实际可用量收敛，
+ *    免得刚进来就满屏"题库不足"。用户仍可自行改大。
+ */
 function loadBankExamCfg() {
   if (!S.bankId) return;
   const c = S.examCfgByBank[S.bankId];
   if (c && c.counts) {
     S.examCounts = Object.assign({ single: 0, multiple: 0, judge: 0, case: 0 }, c.counts);
     if (c.min) S.examMin = c.min;
+    return;
   }
+  if (!QUESTIONS.length) { S.examCounts = Object.assign({}, EXAM_DEFAULT_COUNTS); return; }
+  const avail = availByType();
+  EXAM_TYPES.forEach(t => { S.examCounts[t] = Math.min(EXAM_DEFAULT_COUNTS[t], avail[t] || 0); });
+}
+
+/**
+ * 按题型统计可用量（只看题库本身与「题目类型 / 去除」开关，与当前练习模式无关）。
+ * 用于给新题库生成默认配置，避免"当前模式是错题本"时把配置算成 0。
+ */
+function availByType() {
+  const avail = { single: 0, multiple: 0, judge: 0, case: 0 };
+  const cases = {};
+  QUESTIONS.forEach(q => {
+    const t = q.isCase ? 'case' : q.type;
+    if (!S.types[t]) return;                                   // 受「题目类型」勾选影响
+    if (q.isCase) { cases[q.caseId] = 1; return; }
+    if (t === 'multiple' && S.rmAll && isAllSelected(q)) return;
+    if (t === 'judge' && S.rmCorrectJudge && q.answerText === '正确') return;
+    avail[t]++;
+  });
+  avail.case = Object.keys(cases).length;
+  return avail;
 }
 function saveBankExamCfg() {
   if (!S.bankId) return;
@@ -176,11 +205,8 @@ export async function syncPrefsFromCloud() {
 //  · 题量可自行定义，超量自动收敛到可用量并给出提示；
 //  · 配置按题库保存（examCfgByBank），下次进入该题库自动带出。
 // ============================================================
-const EXAM_AVAIL_HINT = {
-  single: '题', multiple: '题', judge: '题', case: '组'
-};
-
-
+/** 计划抽题量与实际可用量（与 sampleExam 同一口径） */
+function examPlan() {
   const pool = buildPool();
   const avail = { single: 0, multiple: 0, judge: 0, case: 0 };
   const caseGroups = {};
@@ -199,19 +225,30 @@ const EXAM_AVAIL_HINT = {
   return { avail, present, planned, caseQs, poolTotal: pool.length, caseGroups: caseArr.length };
 }
 
-function examFullScore() {
+/** 按「配置的题量」算的满分（不考虑题库是否够） */
+function configFullScore() {
   const c = S.examCounts, p = S.examPoints;
   return Math.round(EXAM_TYPES.reduce((s, t) => s + (c[t] || 0) * (p[t] || 0), 0) * 10) / 10;
+}
+/** 按「实际会抽到的题量」（min(配置, 可用)）算的满分 —— 这才是考试真正能拿到的上限 */
+function examFullScore() {
+  const plan = examPlan(), p = S.examPoints;
+  return Math.round(EXAM_TYPES.reduce((s, t) => s + Math.min(S.examCounts[t] || 0, plan.avail[t]) * (p[t] || 0), 0) * 10) / 10;
 }
 
 /** 渲染汇总行：已选题量 + 理论满分 + 超量提醒（不做 DOM 重建） */
 function updateMaxScore() {
   const plan = examPlan();
+  const cfgScore = configFullScore();
   S.fullScore = examFullScore();
-  const el = $('maxScore'); if (el) el.textContent = S.fullScore;
-  const cnt = $('ecSumCount'); if (cnt) cnt.textContent = S.examCounts.single + S.examCounts.multiple + S.examCounts.judge + S.examCounts.case;
-  const extra = $('ecSumExtra');
-  if (extra) extra.textContent = plan.caseQs > 0 ? '（案例按组抽，实际约 ' + (plan.planned + plan.caseQs) + ' 道小题）' : '';
+  const total = EXAM_TYPES.reduce((s, t) => s + (S.examCounts[t] || 0), 0);
+  const sum = $('ecSummary');
+  if (sum) {
+    let h = '已选 <b>' + total + '</b> 项 · 理论满分 <b id="maxScore">' + S.fullScore + '</b> 分';
+    if (cfgScore !== S.fullScore) h += ' <span class="muted">（按配置应为 ' + cfgScore + ' 分，题库不足）</span>';
+    if (plan.caseQs > 0) h += ' <span class="muted">· 案例按组抽，实际约 ' + (plan.planned + plan.caseQs) + ' 道小题</span>';
+    sum.innerHTML = h;
+  }
   // 超量提醒：配置数大于可用量时，实际只抽可用量
   const short = [];
   EXAM_TYPES.forEach(t => {
@@ -263,10 +300,10 @@ function renderExamCfg(force) {
       const max = plan.avail[t];
       return '<div class="opt-row ec-row" data-t="' + t + '">' +
         '<div class="ec-info"><div class="lbl">' + TYPE_NAME[t] + ' <span class="muted">× ' + S.examPoints[t] + ' 分 / ' + TYPE_UNIT[t] + '</span></div>' +
-        '<div class="hint">题库可用 <b>' + max + '</b> ' + TEMP_UNIT(t) + '</div></div>' +
+        '<div class="hint">题库可用 <b>' + max + '</b> ' + TYPE_UNIT[t] + '</div></div>' +
         '<div class="num-row">' +
         '<button type="button" class="ec-mini ec-step" data-t="' + t + '" data-step="-1" aria-label="减少">−</button>' +
-        '<input type="number" class="ec ec-num" data-t="' + t + '" min="0" max="' + max + '" value="' + (S.examCounts[t] || 0) + '" inputmode="numeric">' +
+        '<input type="number" class="ec ec-num" data-t="' + t + '" data-avail="' + max + '" min="0" max="' + max + '" value="' + (S.examCounts[t] || 0) + '" inputmode="numeric">' +
         '<button type="button" class="ec-mini ec-step" data-t="' + t + '" data-step="1" aria-label="增加">+</button>' +
         '<button type="button" class="ec-mini ec-max" data-t="' + t + '">全部</button>' +
         '</div></div>';
@@ -275,8 +312,6 @@ function renderExamCfg(force) {
   syncEcInputs();
   updateMaxScore();
 }
-function TEMP_UNIT(t) { return EXAM_UNIT[t]; }
-const EXAM_UNIT = { single: '题', multiple: '题', judge: '题', case: '组' };
 
 /** 设置某题型题量并即时保存（clamp 到 0..可用量） */
 function setExamCount(t, v, opt) {
@@ -439,6 +474,8 @@ function start(p, atIdx) {
   if (pool.length === 0) { alert('没有可用题目，请返回首页调整设置。'); clearProgress(); return; }
   S.pool = pool;
   S.questionPts = S.mode === 'exam' ? assignPts(pool) : [];
+  // 组卷满分随「自选题量」而变：开考时按实际抽到的题定死（结果页按它显示 "得分 / 满分"）
+  if (S.mode === 'exam' && !resumed) S.fullScore = Math.round(S.questionPts.reduce((a, b) => a + b, 0) * 10) / 10;
   if (resumed) {
     S.idx = p.idx || 0;
     S.userAns = Array.isArray(p.userAns) ? p.userAns : new Array(pool.length).fill(null);
@@ -698,7 +735,7 @@ function showResult(scoreNum, right, wrong, total, title, isExam) {
   $('practice').classList.add('hide');
   $('result').classList.remove('hide');
   $('resTitle').textContent = title;
-  if (isExam) { $('resScore').textContent = scoreNum + ' / 100'; }
+  if (isExam) { $('resScore').textContent = scoreNum + ' / ' + (S.fullScore || 100); }
   else { $('resScore').textContent = right; }
   $('resSub').textContent = (isExam ? ('得分 ' + scoreNum + ' 分　') : '') + (right + ' / ' + total + ' 正确');
   $('stTotal').textContent = total;
@@ -784,21 +821,24 @@ function bindHome() {
     m.classList.add('active'); S.mode = m.dataset.mode;
     const exam = S.mode === 'exam';
     $('examCfg').classList.toggle('hide', !exam);
-    if (exam) { $('examCfgBody').classList.add('hide'); $('examCfgArr').textContent = '▸'; }
+    if (exam) { renderExamCfg(true); $('examCfgBody').classList.add('hide'); $('examCfgArr').textContent = '▸'; }
     saveSettings();
   }));
   $('examCfgHead').addEventListener('click', () => {
     const b = $('examCfgBody'); b.classList.toggle('hide');
     $('examCfgArr').textContent = b.classList.contains('hide') ? '▸' : '▾';
+    if (!b.classList.contains('hide')) renderExamCfg(true);
   });
   document.querySelectorAll('#typeChips .chip').forEach(c => c.addEventListener('click', () => {
-    const t = c.dataset.t; S.types[t] = !S.types[t]; c.classList.toggle('active', S.types[t]); updateFilterStat();
+    const t = c.dataset.t; S.types[t] = !S.types[t]; c.classList.toggle('active', S.types[t]);
+    updateFilterStat(); renderExamCfg(true);
     saveSettings();
   }));
   // 练习选项：每一次切换都立即落盘（本地 + 云端），退出/刷新后原样恢复
   $('showAns').addEventListener('change', e => { S.showAns = e.target.checked; saveSettings(); });
-  $('rmAll').addEventListener('change', e => { S.rmAll = e.target.checked; updateFilterStat(); saveSettings(); });
-  $('rmCorrectJudge').addEventListener('change', e => { S.rmCorrectJudge = e.target.checked; updateFilterStat(); saveSettings(); });
+  // 「去除多选全选 / 去除正确判断题」会改变各题型的可用量，必须重算题型行与满分
+  $('rmAll').addEventListener('change', e => { S.rmAll = e.target.checked; updateFilterStat(); renderExamCfg(); saveSettings(); });
+  $('rmCorrectJudge').addEventListener('change', e => { S.rmCorrectJudge = e.target.checked; updateFilterStat(); renderExamCfg(); saveSettings(); });
   $('revealAfter').addEventListener('change', e => { S.revealAfter = e.target.checked; saveSettings(); });
   $('autoRemoveWrong').addEventListener('change', e => { S.autoRemoveWrong = e.target.checked; saveSettings(); });
   $('wrongLibBtn').addEventListener('click', () => openLib('wrong'));
@@ -813,12 +853,58 @@ function bindHome() {
   });
   // 从头开始：丢掉旧进度，按当前设置重新组题
   $('restartBtn').addEventListener('click', () => { clearProgress(); start(); });
-  document.querySelectorAll('.ec').forEach(inp => inp.addEventListener('change', e => {
-    const t = e.target.dataset.t;
-    const v = Math.max(0, Math.min(200, parseInt(e.target.value) || 0));
-    S.examCounts[t] = v; e.target.value = v; updateMaxScore(); saveSettings();
-  }));
-  $('examMin').addEventListener('change', e => { S.examMin = Math.max(5, Math.min(240, parseInt(e.target.value) || 90)); saveSettings(); });
+  // ---- 组卷设置：题型行是动态生成的，用事件委托绑定 ----
+  // 输入中：只更新汇总（不 clamp、不重建 DOM），避免打断打字
+  $('ecRows').addEventListener('input', e => {
+    const inp = e.target.closest ? e.target.closest('.ec-num') : null;
+    if (!inp) return;
+    const t = inp.dataset.t;
+    const v = parseInt(inp.value, 10);
+    if (!isNaN(v) && v >= 0) S.examCounts[t] = Math.min(v, 9999);
+    updateMaxScore();
+  });
+  // 失焦/回车：收敛到 0..可用量，写回输入框，并即时保存（本地 + 云端 + 题库级）
+  $('ecRows').addEventListener('change', e => {
+    const inp = e.target.closest ? e.target.closest('.ec-num') : null;
+    if (!inp) return;
+    const t = inp.dataset.t;
+    inp.value = setExamCount(t, inp.value);
+    updateMaxScore();
+  });
+  $('ecRows').addEventListener('click', e => {
+    const el = e.target.closest ? e.target.closest('button') : null;
+    if (!el) return;
+    const t = el.dataset.t;
+    if (!t) return;
+    const plan = examPlan();
+    if (el.classList.contains('ec-max')) setExamCount(t, plan.avail[t]);
+    else if (el.classList.contains('ec-step')) setExamCount(t, (S.examCounts[t] || 0) + parseInt(el.dataset.step, 10));
+    else return;
+    renderExamCfg(true);
+  });
+  // 一键预设
+  $('ecMaxAll').addEventListener('click', () => {
+    const plan = examPlan();
+    EXAM_TYPES.forEach(t => { S.examCounts[t] = plan.avail[t] || 0; });
+    saveBankExamCfg(); saveSettings(); renderExamCfg(true);
+  });
+  $('ecZeroAll').addEventListener('click', () => {
+    EXAM_TYPES.forEach(t => { S.examCounts[t] = 0; });
+    saveBankExamCfg(); saveSettings(); renderExamCfg(true);
+  });
+  $('ecDefault').addEventListener('click', () => {
+    // 「恢复默认」表达的是"标准 100 分整卷"的意图，不收敛到可用量；
+    // 题库不够时由黄色提醒说明实际会抽多少、满分是多少
+    EXAM_TYPES.forEach(t => { S.examCounts[t] = EXAM_DEFAULT_COUNTS[t]; });
+    S.examMin = 90;
+    $('examMin').value = S.examMin;
+    saveBankExamCfg(); saveSettings(); renderExamCfg(true);
+  });
+  $('examMin').addEventListener('change', e => {
+    S.examMin = Math.max(5, Math.min(240, parseInt(e.target.value, 10) || 90));
+    e.target.value = S.examMin;
+    saveBankExamCfg(); saveSettings(); updateMaxScore();
+  });
   $('startBtn').addEventListener('click', () => start());
 }
 function bindPractice() {
@@ -854,8 +940,8 @@ function applyUIFromState() {
   document.querySelectorAll('.mode').forEach(m => m.classList.toggle('active', m.dataset.mode === S.mode));
   document.querySelectorAll('#typeChips .chip').forEach(c => c.classList.toggle('active', !!S.types[c.dataset.t]));
   $('showAns').checked = S.showAns; $('rmAll').checked = S.rmAll; $('rmCorrectJudge').checked = S.rmCorrectJudge; $('revealAfter').checked = S.revealAfter; $('autoRemoveWrong').checked = S.autoRemoveWrong;
-  document.querySelectorAll('.ec').forEach(inp => { inp.value = S.examCounts[inp.dataset.t]; });
   $('examMin').value = S.examMin;
+  renderExamCfg(true);          // 题型行按当前题库动态生成 + 同步题量输入框
   updateMaxScore();
   $('examCfg').classList.toggle('hide', S.mode !== 'exam');
   if (S.mode === 'exam') { $('examCfgBody').classList.add('hide'); $('examCfgArr').textContent = '▸'; }
@@ -928,5 +1014,5 @@ export function initEngine() {
 // 本地开发调试钩子（供 scripts/check_resume.mjs 端到端验收使用）。
 // import.meta.env.DEV 在 vite build 时被替换为 false，整块会被打包器剔除，不会进生产包。
 if (import.meta.env.DEV) {
-  window.__exam = { setQuestions, initEngine, refreshHomeUI, start, snapshotProgress, S };
+  window.__exam = { setQuestions, initEngine, refreshHomeUI, start, snapshotProgress, setBankKey, renderExamCfg, examPlan, examFullScore, S };
 }

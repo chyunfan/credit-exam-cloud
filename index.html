@@ -80,7 +80,8 @@
             </div>
             <div class="mode" data-mode="exam">
               <div class="ic">📝</div><div class="t">组卷模拟考试</div>
-              <div class="d">随机抽取组卷，限时答题，交卷后出成绩</div>
+              <div class="d">按本库题型自选题量，随机组卷、限时答题，交卷出成绩</div>
+              <div class="counts" id="examCounts"></div>
             </div>
             <div class="mode" data-mode="wrong">
               <div class="ic">📕</div><div class="t">错题练习</div>
@@ -165,7 +166,7 @@
               <button type="button" class="btn btn-ghost btn-sm" id="ecDefault">恢复默认（100 分）</button>
             </div>
             <div class="opt-row"><div class="lbl">考试时长</div><div class="num-row"><input type="number" id="examMin" min="5" max="240" value="90"><span class="muted">分钟（时间到自动交卷）</span></div></div>
-            <div class="ec-sum" id="ecSummary">已选 <b id="ecSumCount">0</b> 题 · 理论满分 <b id="maxScore">100</b> 分</div>
+            <div class="ec-sum" id="ecSummary"></div>
             <div class="ec-warn hide" id="ecWarn"></div>
             <div class="ec-saved" id="ecSaved"></div>
           </div>
