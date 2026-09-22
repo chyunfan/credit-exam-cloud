@@ -154,3 +154,8 @@ export function resetState() {
   state.fav = [];
   state.progress = null;
 }
+
+// 本地开发调试钩子（生产构建会被剔除），供 scripts/check_resume.mjs 验收使用
+if (import.meta.env.DEV) {
+  window.__store = { loadBankState, saveProgress, loadProgress, clearProgress, LS };
+}

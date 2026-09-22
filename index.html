@@ -70,16 +70,6 @@
 
     <!-- 首页（练习配置，复用原引擎） -->
     <div id="home" class="hide">
-      <div class="resume-banner hide" id="resumeBanner">
-        <div class="rb-left">
-          <div class="rb-text">检测到上次未完成的练习（第 <b id="rbIdx">0</b> / <span id="rbTotal">0</span> 题）</div>
-          <div class="rb-types" id="rbTypes"></div>
-        </div>
-        <div class="rb-btns">
-          <button class="btn btn-primary sm" id="resumeBtn">继续练习</button>
-          <button class="btn ghost sm" id="discardBtn">重新开始</button>
-        </div>
-      </div>
       <div class="card">
         <div class="section">
           <h2>练习模式</h2>
@@ -152,20 +142,32 @@
         </div>
 
         <div class="filter-stat" id="filterStat"></div>
-        <button class="btn btn-primary" id="startBtn">开始练习</button>
+        <!-- 主操作区：无进度时只有「开始练习」；有未完成进度时拆成「从头开始」+「继续练习」 -->
+        <div class="start-actions" id="startActions">
+          <button class="btn btn-primary" id="startBtn" type="button">开始练习</button>
+          <button class="btn btn-ghost hide" id="restartBtn" type="button">从头开始</button>
+          <button class="btn btn-ok hide" id="continueBtn" type="button">继续练习</button>
+        </div>
+        <div class="start-hint hide" id="startHint"></div>
 
         <div class="section" id="examCfg">
           <div class="collapsible-head" id="examCfgHead">
-            <h2>组卷设置（满分 100 分）</h2>
+            <h2>组卷设置（自选题量 · 实时满分）</h2>
             <span class="arr" id="examCfgArr">▸</span>
           </div>
           <div id="examCfgBody" class="collapsible-body hide">
-            <div class="opt-row"><div class="lbl">单选题</div><div class="num-row"><input type="number" class="ec" data-t="single" min="0" max="200" value="60"><span class="muted">题 × 0.5 分</span></div></div>
-            <div class="opt-row"><div class="lbl">多选题</div><div class="num-row"><input type="number" class="ec" data-t="multiple" min="0" max="200" value="40"><span class="muted">题 × 1 分</span></div></div>
-            <div class="opt-row"><div class="lbl">判断题</div><div class="num-row"><input type="number" class="ec" data-t="judge" min="0" max="200" value="20"><span class="muted">题 × 0.5 分</span></div></div>
-            <div class="opt-row"><div class="lbl">案例题</div><div class="num-row"><input type="number" class="ec" data-t="case" min="0" max="50" value="5"><span class="muted">组 × 4 分</span></div></div>
+            <!-- 题型行按「当前题库实际有的题型」动态生成，不再写死四行 -->
+            <div class="ec-note" id="ecAvail">正在读取题库题型…</div>
+            <div id="ecRows"></div>
+            <div class="ec-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="ecMaxAll">各题型取最多</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="ecZeroAll">全部清零</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="ecDefault">恢复默认（100 分）</button>
+            </div>
             <div class="opt-row"><div class="lbl">考试时长</div><div class="num-row"><input type="number" id="examMin" min="5" max="240" value="90"><span class="muted">分钟（时间到自动交卷）</span></div></div>
-            <div class="muted" style="text-align:right">理论满分：<b id="maxScore">100</b> 分</div>
+            <div class="ec-sum" id="ecSummary">已选 <b id="ecSumCount">0</b> 题 · 理论满分 <b id="maxScore">100</b> 分</div>
+            <div class="ec-warn hide" id="ecWarn"></div>
+            <div class="ec-saved" id="ecSaved"></div>
           </div>
         </div>
       </div>

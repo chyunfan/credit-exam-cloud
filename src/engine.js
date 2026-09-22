@@ -9,17 +9,24 @@ let QUESTIONS = [];
 export function setQuestions(arr) { QUESTIONS = Array.isArray(arr) ? arr : []; }
 
 // ---------- state ----------
+const EXAM_DEFAULT_COUNTS = { single: 60, multiple: 40, judge: 20, case: 5 };
+const EXAM_TYPES = ['single', 'multiple', 'judge', 'case'];
+
 const S = {
   mode: 'sequential', types: { single: true, multiple: true, judge: true, case: true },
   showAns: false, rmAll: true, rmCorrectJudge: true, revealAfter: false, autoRemoveWrong: true,
-  examCounts: { single: 60, multiple: 40, judge: 20, case: 5 },
+  examCounts: Object.assign({}, EXAM_DEFAULT_COUNTS),
   examPoints: { single: 0.5, multiple: 1, judge: 0.5, case: 4 },
   examMin: 90,
+  bankId: null,
+  examCfgByBank: {},        // { [题库id]: { counts, min, updatedAt } } —— 组卷配置按题库各存一份
+  fullScore: 100,           // 本次组卷的理论满分（自选题量后不再是固定 100）
   pool: [], idx: 0, userAns: [], revealed: [], correctCount: 0, questionPts: [],
   timer: null, deadline: 0, finished: false
 };
 const TYPE_NAME = { single: '单选题', multiple: '多选题', judge: '判断题', case: '案例题' };
 const TYPE_CLS = { single: 'b-single', multiple: 'b-multi', judge: 'b-judge', case: 'b-case' };
+const TYPE_UNIT = { single: '题', multiple: '题', judge: '题', case: '组' };
 
 function $(id) { return document.getElementById(id); }
 
@@ -38,6 +45,7 @@ function settingsSnapshot() {
     mode: S.mode, types: S.types, showAns: S.showAns, rmAll: S.rmAll,
     rmCorrectJudge: S.rmCorrectJudge, revealAfter: S.revealAfter, autoRemoveWrong: S.autoRemoveWrong,
     examCounts: S.examCounts, examPoints: S.examPoints, examMin: S.examMin,
+    examCfgByBank: S.examCfgByBank,
     updatedAt: Date.now()
   };
 }
@@ -47,9 +55,43 @@ function applySettings(c) {
   S.showAns = !!c.showAns; S.rmAll = !!c.rmAll;
   S.rmCorrectJudge = (c.rmCorrectJudge === undefined ? true : !!c.rmCorrectJudge); S.revealAfter = !!c.revealAfter;
   S.autoRemoveWrong = (c.autoRemoveWrong === undefined ? true : !!c.autoRemoveWrong);
-  if (c.examCounts) S.examCounts = Object.assign(S.examCounts, c.examCounts);
   if (c.examPoints) S.examPoints = Object.assign(S.examPoints, c.examPoints);
+  S.examCounts = Object.assign({}, EXAM_DEFAULT_COUNTS, c.examCounts || {});
   S.examMin = c.examMin || 90;
+  if (c.examCfgByBank && typeof c.examCfgByBank === 'object') S.examCfgByBank = Object.assign({}, c.examCfgByBank);
+  loadBankExamCfg();          // 题库级配置优先于"上次用过的配置"
+}
+
+// ---------- 组卷配置：按题库各存一份 ----------
+/** 切题库时调用：把该题库上次的组卷配置带回首页 */
+export function setBankKey(id) {
+  S.bankId = id || null;
+  loadBankExamCfg();
+  _ecSig = '';                 // 题库变了，题型行必须重建
+  renderExamCfg(true);
+}
+
+function loadBankExamCfg() {
+  if (!S.bankId) return;
+  const c = S.examCfgByBank[S.bankId];
+  if (c && c.counts) {
+    S.examCounts = Object.assign({ single: 0, multiple: 0, judge: 0, case: 0 }, c.counts);
+    if (c.min) S.examMin = c.min;
+  }
+}
+function saveBankExamCfg() {
+  if (!S.bankId) return;
+  S.examCfgByBank[S.bankId] = { counts: Object.assign({}, S.examCounts), min: S.examMin, updatedAt: Date.now() };
+  showEcSaved();
+}
+function showEcSaved() {
+  const el = $('ecSaved');
+  if (!el) return;
+  const g = $('topBankName');
+  const bank = g && g.textContent && g.textContent !== '—' ? '题库「' + g.textContent + '」' : '当前题库';
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2, '0'), mm = String(t.getMinutes()).padStart(2, '0');
+  el.textContent = '✓ 组卷配置已保存到 ' + bank + '（' + hh + ':' + mm + '），下次进入自动带出，并跟随账号同步';
 }
 
 /** 改了就存：本地立即写，云端防抖 800ms */
@@ -125,11 +167,132 @@ export async function syncPrefsFromCloud() {
   }
 }
 
-function updateMaxScore() {
-  const c = S.examCounts, p = S.examPoints;
-  const max = Math.round((c.single * p.single + c.multiple * p.multiple + c.judge * p.judge + c.case * p.case) * 10) / 10;
-  const el = document.getElementById('maxScore'); if (el) el.textContent = max;
+// ============================================================
+// 组卷设置：题型行按「当前题库实际有的题型」动态生成
+// ------------------------------------------------------------
+//  · 可用量口径与真正抽题完全一致（同一份 buildPool）：
+//    受「题目类型」勾选与「去除多选全选 / 去除正确判断题」开关影响；
+//  · 案例题按「组」计，可用量 = 题库里案例组数；
+//  · 题量可自行定义，超量自动收敛到可用量并给出提示；
+//  · 配置按题库保存（examCfgByBank），下次进入该题库自动带出。
+// ============================================================
+const EXAM_AVAIL_HINT = {
+  single: '题', multiple: '题', judge: '题', case: '组'
+};
+
+
+  const pool = buildPool();
+  const avail = { single: 0, multiple: 0, judge: 0, case: 0 };
+  const caseGroups = {};
+  pool.forEach(q => {
+    if (q.isCase) caseGroups[q.caseId] = (caseGroups[q.caseId] || 0) + 1;
+    else if (avail[q.type] !== undefined) avail[q.type]++;
+  });
+  const caseArr = Object.values(caseGroups);
+  avail.case = caseArr.length;
+  const present = EXAM_TYPES.filter(t => avail[t] > 0);
+  let planned = 0;
+  ['single', 'multiple', 'judge'].forEach(t => { planned += Math.min(S.examCounts[t] || 0, avail[t]); });
+  const wantCase = Math.min(S.examCounts.case || 0, caseArr.length);
+  const avgCase = caseArr.length ? caseArr.reduce((s, n) => s + n, 0) / caseArr.length : 0;
+  const caseQs = Math.round(wantCase * avgCase);
+  return { avail, present, planned, caseQs, poolTotal: pool.length, caseGroups: caseArr.length };
 }
+
+function examFullScore() {
+  const c = S.examCounts, p = S.examPoints;
+  return Math.round(EXAM_TYPES.reduce((s, t) => s + (c[t] || 0) * (p[t] || 0), 0) * 10) / 10;
+}
+
+/** 渲染汇总行：已选题量 + 理论满分 + 超量提醒（不做 DOM 重建） */
+function updateMaxScore() {
+  const plan = examPlan();
+  S.fullScore = examFullScore();
+  const el = $('maxScore'); if (el) el.textContent = S.fullScore;
+  const cnt = $('ecSumCount'); if (cnt) cnt.textContent = S.examCounts.single + S.examCounts.multiple + S.examCounts.judge + S.examCounts.case;
+  const extra = $('ecSumExtra');
+  if (extra) extra.textContent = plan.caseQs > 0 ? '（案例按组抽，实际约 ' + (plan.planned + plan.caseQs) + ' 道小题）' : '';
+  // 超量提醒：配置数大于可用量时，实际只抽可用量
+  const short = [];
+  EXAM_TYPES.forEach(t => {
+    const want = S.examCounts[t] || 0;
+    if (want > plan.avail[t]) short.push(TYPE_NAME[t] + ' 配置 ' + want + ' ' + TYPE_UNIT[t] + '，题库仅 ' + plan.avail[t] + ' ' + TYPE_UNIT[t]);
+  });
+  const warn = $('ecWarn');
+  if (warn) {
+    if (short.length) { warn.innerHTML = '⚠️ 以下题型题库不足，实际按可用量抽取：<br>· ' + short.join('<br>· '); warn.classList.remove('hide'); }
+    else { warn.innerHTML = ''; warn.classList.add('hide'); }
+  }
+  // 首页「组卷模拟考试」卡片上的摘要
+  const card = $('examCounts');
+  if (card) {
+    const list = EXAM_TYPES.filter(t => plan.avail[t] > 0).map(t => TYPE_NAME[t].replace('题', '') + ' ' + (S.examCounts[t] || 0) + TYPE_UNIT[t]);
+    card.textContent = list.length ? list.join(' · ') + '｜满分 ' + S.fullScore + ' 分 · ' + S.examMin + ' 分钟' : '当前题库暂无可用题目';
+  }
+  return S.fullScore;
+}
+
+/** 让输入框显示值跟随状态（仅在非输入状态下调用，避免打断打字） */
+function syncEcInputs() {
+  document.querySelectorAll('#ecRows .ec').forEach(inp => {
+    const v = S.examCounts[inp.dataset.t] || 0;
+    if (String(inp.value) !== String(v)) inp.value = v;
+  });
+}
+
+let _ecSig = '';
+/**
+ * 生成题型行。
+ * @param {boolean} force 强制重建（题库切换时用）
+ * 只有「可用题型 / 可用量」签名变化时才重建 DOM，避免把用户正在输入的内容打断。
+ */
+function renderExamCfg(force) {
+  const box = $('ecRows');
+  if (!box) return;
+  const plan = examPlan();
+  const sig = plan.present.join(',') + '|' + plan.present.map(t => plan.avail[t]).join(',');
+  const availEl = $('ecAvail');
+  if (availEl) {
+    availEl.textContent = plan.poolTotal
+      ? '本库当前可用 ' + plan.poolTotal + ' 题（受「题目类型」与「去除」开关影响），题型与题量可自行定义：'
+      : '当前题库/筛选下没有可用题目，请调整「题目类型」或「练习选项」。';
+  }
+  if (force || sig !== _ecSig) {
+    _ecSig = sig;
+    box.innerHTML = plan.present.map(t => {
+      const max = plan.avail[t];
+      return '<div class="opt-row ec-row" data-t="' + t + '">' +
+        '<div class="ec-info"><div class="lbl">' + TYPE_NAME[t] + ' <span class="muted">× ' + S.examPoints[t] + ' 分 / ' + TYPE_UNIT[t] + '</span></div>' +
+        '<div class="hint">题库可用 <b>' + max + '</b> ' + TEMP_UNIT(t) + '</div></div>' +
+        '<div class="num-row">' +
+        '<button type="button" class="ec-mini ec-step" data-t="' + t + '" data-step="-1" aria-label="减少">−</button>' +
+        '<input type="number" class="ec ec-num" data-t="' + t + '" min="0" max="' + max + '" value="' + (S.examCounts[t] || 0) + '" inputmode="numeric">' +
+        '<button type="button" class="ec-mini ec-step" data-t="' + t + '" data-step="1" aria-label="增加">+</button>' +
+        '<button type="button" class="ec-mini ec-max" data-t="' + t + '">全部</button>' +
+        '</div></div>';
+    }).join('');
+  }
+  syncEcInputs();
+  updateMaxScore();
+}
+function TEMP_UNIT(t) { return EXAM_UNIT[t]; }
+const EXAM_UNIT = { single: '题', multiple: '题', judge: '题', case: '组' };
+
+/** 设置某题型题量并即时保存（clamp 到 0..可用量） */
+function setExamCount(t, v, opt) {
+  const plan = examPlan();
+  const max = plan.avail[t] || 0;
+  let n = parseInt(v, 10);
+  if (isNaN(n)) n = 0;
+  n = Math.max(0, Math.min(max, n));
+  S.examCounts[t] = n;
+  if (!opt || !opt.silent) {
+    saveBankExamCfg();
+    saveSettings();
+  }
+  return n;
+}
+
 
 // ---------- pool building ----------
 function isAllSelected(q) {
@@ -220,6 +383,36 @@ function getRender(q) {
 }
 function letterOf(q, i) { const r = getRender(q); return r.keys[i]; }
 
+// ---------- progress snapshot ----------
+// ⚠️ 必须存「完整快照」：题序 ids + 作答 userAns + 揭示状态 revealed + 考试剩余时间 + 当时设置。
+// 历史 bug：这里只存了一个剩余时间数字，于是「继续练习」恢复出来永远是空的（等于从头开始）。
+function snapshotProgress(rem) {
+  if (!S.pool || !S.pool.length) return null;
+  const arr = Array.isArray(S.userAns) ? S.userAns : [];
+  const answered = arr.filter(a => a !== null && a !== undefined && !(Array.isArray(a) && a.length === 0)).length;
+  return {
+    v: 2,
+    mode: S.mode,
+    types: Object.assign({}, S.types),
+    showAns: S.showAns, rmAll: S.rmAll, rmCorrectJudge: S.rmCorrectJudge,
+    revealAfter: S.revealAfter, autoRemoveWrong: S.autoRemoveWrong,
+    ids: S.pool.map(q => q.id),
+    idx: S.idx,
+    userAns: arr.map(a => (Array.isArray(a) ? a.slice() : a)),
+    revealed: Array.isArray(S.revealed) ? S.revealed.slice() : [],
+    questionPts: Array.isArray(S.questionPts) ? S.questionPts.slice() : [],
+    remainingMs: (typeof rem === 'number' && rem > 0) ? rem : currentRemaining(),
+    answered: answered,
+    total: S.pool.length,
+    finished: false,
+    updatedAt: Date.now()
+  };
+}
+function saveSnapshot(rem) {
+  const snap = snapshotProgress(rem);
+  if (snap) saveProgress(snap);
+}
+
 // ---------- start ----------
 function start(p, atIdx) {
   let pool, resumed = !!p, rem = 0;
@@ -271,7 +464,7 @@ function start(p, atIdx) {
   if (S.mode === 'exam') startTimer(rem); else stopTimer();
   renderSheet();
   renderQuestion();
-  saveProgress(rem);
+  saveSnapshot(rem);
 }
 
 function startTimer(remainingMs) {
@@ -398,7 +591,7 @@ function onPick(q, i, r) {
   }
   renderQuestion();
   recordWrong(q);
-  saveProgress(currentRemaining());
+  saveSnapshot();
 }
 
 function checkCurrent() {
@@ -409,6 +602,7 @@ function checkCurrent() {
   S.revealed[S.idx] = true;
   renderQuestion();
   recordWrong(q);
+  saveSnapshot();
 }
 
 // ---------- correctness ----------
@@ -458,7 +652,7 @@ function renderSheet() {
   el.innerHTML = h;
   const sc = $('sheetCount'); if (sc) sc.textContent = '(' + answered + '/' + S.pool.length + ')';
   el.querySelectorAll('.c').forEach(c => c.addEventListener('click', () => {
-    S.idx = parseInt(c.dataset.go); renderQuestion(); saveProgress(currentRemaining());
+    S.idx = parseInt(c.dataset.go); renderQuestion(); saveSnapshot();
     $('sheetCard').classList.add('hide'); $('sheetArr').textContent = '▾'; $('sheetToggle').classList.remove('open');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }));
@@ -466,13 +660,13 @@ function renderSheet() {
 
 // ---------- navigation ----------
 function next() {
-  if (S.idx < S.pool.length - 1) { S.idx++; renderQuestion(); window.scrollTo({ top: 0, behavior: 'smooth' }); saveProgress(currentRemaining()); }
+  if (S.idx < S.pool.length - 1) { S.idx++; renderQuestion(); window.scrollTo({ top: 0, behavior: 'smooth' }); saveSnapshot(); }
   else {
     if (S.mode === 'exam') { if (confirm('确定交卷吗？')) finishExam(false); }
     else finishSequential();
   }
 }
-function prev() { if (S.idx > 0) { S.idx--; renderQuestion(); window.scrollTo({ top: 0, behavior: 'smooth' }); saveProgress(currentRemaining()); } }
+function prev() { if (S.idx > 0) { S.idx--; renderQuestion(); window.scrollTo({ top: 0, behavior: 'smooth' }); saveSnapshot(); } }
 
 // ---------- finish ----------
 function finishSequential() {
@@ -611,8 +805,14 @@ function bindHome() {
   $('favLibBtn').addEventListener('click', () => openLib('fav'));
   $('libClose').addEventListener('click', closeLib);
   $('libMask').addEventListener('click', closeLib);
-  $('resumeBtn').addEventListener('click', () => { const p = loadProgress(); if (p) start(p); });
-  $('discardBtn').addEventListener('click', () => { clearProgress(); $('resumeBanner').classList.add('hide'); });
+  // 继续练习：用完整快照恢复（题序 / 已作答 / 对错揭示 / 考试剩余时间都在快照里）
+  $('continueBtn').addEventListener('click', () => {
+    const p = loadProgress();
+    if (p && Array.isArray(p.ids) && p.ids.length) start(p);
+    else { clearProgress(); start(); }
+  });
+  // 从头开始：丢掉旧进度，按当前设置重新组题
+  $('restartBtn').addEventListener('click', () => { clearProgress(); start(); });
   document.querySelectorAll('.ec').forEach(inp => inp.addEventListener('change', e => {
     const t = e.target.dataset.t;
     const v = Math.max(0, Math.min(200, parseInt(e.target.value) || 0));
@@ -630,9 +830,9 @@ function bindPractice() {
   $('checkBtn').addEventListener('click', checkCurrent);
   $('quitBtn').addEventListener('click', () => {
     if (confirm('确定退出当前练习？进度已保存，可稍后继续。')) {
-      saveProgress(currentRemaining()); stopTimer();
+      saveSnapshot(); stopTimer();
       $('practice').classList.add('hide'); $('home').classList.remove('hide');
-      refreshResumeBanner();
+      refreshStartActions();
       updateLibStats();
     }
   });
@@ -644,8 +844,9 @@ function bindPractice() {
   });
 }
 function bindResult() {
-  $('againBtn').addEventListener('click', () => { $('result').classList.add('hide'); $('home').classList.remove('hide'); updateLibStats(); });
-  $('quitBtn2').addEventListener('click', () => { $('result').classList.add('hide'); $('home').classList.remove('hide'); updateLibStats(); });
+  // 练习完成后进度已被清掉（showResult → clearProgress），返回首页应恢复成单个「开始练习」
+  $('againBtn').addEventListener('click', () => { $('result').classList.add('hide'); $('home').classList.remove('hide'); updateLibStats(); refreshStartActions(); });
+  $('quitBtn2').addEventListener('click', () => { $('result').classList.add('hide'); $('home').classList.remove('hide'); updateLibStats(); refreshStartActions(); });
   $('reviewWrong').addEventListener('click', () => { $('wrongWrap').classList.toggle('hide'); });
 }
 
@@ -660,22 +861,49 @@ function applyUIFromState() {
   if (S.mode === 'exam') { $('examCfgBody').classList.add('hide'); $('examCfgArr').textContent = '▸'; }
   updateFilterStat();
 }
-function refreshResumeBanner() {
-  const pr = loadProgress();
-  if (pr && !pr.finished) {
-    $('rbIdx').textContent = (pr.idx || 0) + 1;
-    $('rbTotal').textContent = Array.isArray(pr.ids) ? pr.ids.length : (pr.userAns ? pr.userAns.length : 0);
-    const ids = Array.isArray(pr.ids) ? pr.ids : [];
-    const idset = new Set(ids);
-    const byType = { single: 0, multiple: 0, judge: 0, case: 0 };
-    QUESTIONS.forEach(q => { if (idset.has(q.id)) byType[q.isCase ? 'case' : q.type]++; });
-    const el = $('rbTypes');
-    const total = byType.single + byType.multiple + byType.judge + byType.case;
-    if (total === 0) { el.innerHTML = '<span class="muted">暂无题型分布</span>'; }
-    else { el.textContent = [['单选', 'single'], ['多选', 'multiple'], ['判断', 'judge'], ['案例', 'case']].map(([n, t]) => n + ' ' + byType[t]).join(' · '); }
-    $('resumeBanner').classList.remove('hide');
+/** 有未完成的练习进度时返回摘要，否则 null */
+function resumeInfo() {
+  const p = loadProgress();
+  if (!p || p.finished) return null;
+  const total = Array.isArray(p.ids) ? p.ids.length : 0;
+  if (!total) return null;
+  const arr = Array.isArray(p.userAns) ? p.userAns : [];
+  const answered = typeof p.answered === 'number'
+    ? p.answered
+    : arr.filter(a => a !== null && a !== undefined && !(Array.isArray(a) && a.length === 0)).length;
+  return {
+    at: Math.min((p.idx || 0) + 1, total),
+    total: total,
+    answered: answered,
+    mode: p.mode || 'sequential'
+  };
+}
+
+/**
+ * 主操作区状态：
+ *  - 无进度 → 只显示「开始练习」
+ *  - 有未完成进度 → 换成「从头开始」+「继续练习」（继续练习为绿色）
+ */
+function refreshStartActions() {
+  const info = resumeInfo();
+  const act = $('startActions'), hint = $('startHint');
+  if (!act) return;
+  if (info) {
+    $('startBtn').classList.add('hide');
+    $('restartBtn').classList.remove('hide');
+    $('continueBtn').classList.remove('hide');
+    act.classList.add('with-resume');
+    const modeName = info.mode === 'exam' ? '模拟考试'
+      : (info.mode === 'wrong' ? '错题练习' : (info.mode === 'fav' ? '收藏练习' : '顺序练习'));
+    hint.textContent = '上次练到第 ' + info.at + ' / ' + info.total + ' 题，已答 ' + info.answered + ' 题（' + modeName + '）';
+    hint.classList.remove('hide');
   } else {
-    $('resumeBanner').classList.add('hide');
+    $('startBtn').classList.remove('hide');
+    $('restartBtn').classList.add('hide');
+    $('continueBtn').classList.add('hide');
+    act.classList.remove('with-resume');
+    hint.textContent = '';
+    hint.classList.add('hide');
   }
 }
 
@@ -683,7 +911,7 @@ function refreshResumeBanner() {
 export function refreshHomeUI() {
   updateFilterStat();
   updateLibStats();
-  refreshResumeBanner();
+  refreshStartActions();
   applyUIFromState();
 }
 
@@ -692,7 +920,13 @@ export function initEngine() {
   loadSettings();
   if (['sequential', 'exam'].indexOf(S.mode) < 0) S.mode = 'sequential';
   applyUIFromState();
-  refreshResumeBanner();
+  refreshStartActions();
   updateLibStats();
   if (!_inited) { bindHome(); bindPractice(); bindResult(); _inited = true; }
+}
+
+// 本地开发调试钩子（供 scripts/check_resume.mjs 端到端验收使用）。
+// import.meta.env.DEV 在 vite build 时被替换为 false，整块会被打包器剔除，不会进生产包。
+if (import.meta.env.DEV) {
+  window.__exam = { setQuestions, initEngine, refreshHomeUI, start, snapshotProgress, S };
 }

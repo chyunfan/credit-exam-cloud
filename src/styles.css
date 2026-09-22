@@ -17,7 +17,13 @@ header.top h1{font-size:18px;font-weight:700}
 header.top p{font-size:12px;color:var(--sub)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow)}
 .section{margin-bottom:18px}
-#startBtn{margin-top:8px;margin-bottom:30px}
+/* 主操作区：默认单按钮「开始练习」；有未完成进度时拆成「从头开始 / 继续练习」 */
+.start-actions{display:flex;gap:12px;margin-top:8px;margin-bottom:30px}
+.start-actions .btn{flex:1;min-width:0}
+.start-actions.with-resume{margin-bottom:8px}
+.start-hint{font-size:12.5px;color:var(--sub);text-align:center;margin-bottom:26px}
+.btn-ok{background:var(--ok);color:#fff;width:100%;box-shadow:0 4px 14px rgba(27,171,99,.3)}
+.btn-ok:hover{background:#159455}
 #examCfg{margin-top:0}
 .section h2{font-size:14px;color:var(--sub);font-weight:600;margin-bottom:10px;letter-spacing:.3px}
 .mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -211,11 +217,6 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
 .qhead{display:flex;align-items:center;gap:8px;margin-bottom:0}
 .favBtn{border:none;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#cbd5e1;padding:2px 6px;border-radius:8px;transition:.15s}
 .favBtn.on{color:#f5b301}
-.resume-banner{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff8e1;border:1px solid #ffe08a;color:#8a6d00;padding:10px 12px;border-radius:10px;margin-bottom:12px;font-size:13px}
-.resume-banner .rb-btns{display:flex;gap:8px;flex-shrink:0}
-.resume-banner .rb-left{display:flex;flex-direction:column;gap:3px;min-width:0}
-.resume-banner .rb-types{font-size:12px;font-weight:600;color:#8a6d00}
-.resume-banner .rb-types .muted{font-weight:500}
 .btn.sm{padding:6px 12px;font-size:13px}
 .btn.ghost{background:#fff;border:1px solid #e2e8f0;color:#64748b}
 .lib-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
