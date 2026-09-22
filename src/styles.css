@@ -37,6 +37,11 @@ header.top p{font-size:12px;color:var(--sub)}
 .ec-mini:hover{border-color:#c7d4f5;color:var(--brand)}
 .ec-mini:active{transform:scale(.94)}
 .ec-max{font-size:12px;font-weight:600;padding:0 9px;min-width:auto;color:var(--brand);background:var(--brand-soft);border-color:var(--brand-soft)}
+/* 试卷总分：单独一行，与下面的各题型题量区分开 */
+.ec-total{margin-bottom:10px;padding-bottom:12px;border-bottom:1px dashed var(--line)}
+.ec-total-in{width:96px;font-weight:700;text-align:center}
+.ec-fit{width:auto;padding:0 10px;font-size:12px;font-weight:600;color:var(--brand);background:var(--brand-soft);border-color:var(--brand-soft)}
+.ec-hit{color:var(--ok);font-weight:600}
 .ec-actions{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 12px}
 .ec-sum{font-size:13px;color:var(--sub);text-align:right;line-height:1.7;margin-top:2px}
 .ec-sum b{color:var(--ink);font-size:15px}
@@ -56,6 +61,11 @@ header.top p{font-size:12px;color:var(--sub)}
 .mode .counts{font-size:12px;line-height:1.5;margin-top:8px;color:#0f766e;font-weight:600;word-break:break-word}
 .mode .counts .muted{color:var(--sub);font-weight:500}
 .mode .counts .tot{color:#334155}
+/* 卡片上的「该模式自己的进度」：绿色小条，一眼看出哪几种模式都练过 */
+.mode .rs{font-size:12px;line-height:1.5;margin-top:8px;color:#0c7a47;font-weight:600;
+  word-break:break-word;display:flex;align-items:baseline;gap:4px}
+.mode .rs b{font-weight:800}
+.mode .rs.hide{display:none}
 .opt-row{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid var(--line);
   border-radius:12px;margin-bottom:10px;background:#fff}
 .opt-row .lbl{font-weight:600;font-size:14px}
@@ -117,9 +127,22 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
 .feedback.ok{background:var(--ok-soft);color:#0c7a47}
 .feedback.no{background:var(--bad-soft);color:#b02328}
 .feedback.warn{background:#fff6e5;color:#96610a;border:1px solid #ffe0a8}
-.answer-line{margin-top:10px;font-size:14px;padding:10px 14px;background:#f7f9fc;border-radius:10px;display:none}
-.answer-line.show{display:block}
-.answer-line b{color:var(--ok)}
+/* 答题反馈条：「对错胶囊 + 正确答案」同处一行，比上下两块省一行高度 */
+.fb-line{margin-top:14px;padding:10px 14px;border-radius:12px;background:#f7f9fc;
+  display:none;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px}
+.fb-line.show{display:flex}
+.fb-pill{flex:0 0 auto;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:600;line-height:1.7}
+.fb-pill.ok{background:var(--ok-soft);color:#0c7a47}
+.fb-pill.no{background:var(--bad-soft);color:#b02328}
+.fb-line .ans-key{color:#41506b}
+.fb-line .ans-key b{color:var(--ok);font-weight:700}
+/* 答案已回显 → 本题选项锁定：不再给出"可以点"的错觉（光标不变手型、hover 不换边框色） */
+.opt.lock{cursor:default}
+.opts.lock .opt:hover,.judge-btns.lock .opt:hover{border-color:var(--line)}
+.opts.lock .opt.sel:hover,.judge-btns.lock .opt.sel:hover{border-color:var(--brand)}
+.opts.lock .opt.ok:hover,.judge-btns.lock .opt.ok:hover{border-color:var(--ok)}
+.opts.lock .opt.no:hover,.judge-btns.lock .opt.no:hover{border-color:var(--bad)}
+.fb-lock{margin-left:auto;flex:0 0 auto;font-size:12px;color:var(--sub);white-space:nowrap}
 /* ---- 答题操作条：固定在屏幕最下方（上一题 / 核对 / 下一题） ---- */
 /* 桌面端居中限宽（与 .wrap 同宽，margin:auto 让 fixed 元素水平居中），手机端通栏 */
 .nav{
@@ -137,17 +160,65 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
 #practice{padding-bottom:20px}
 .sheet{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin-top:6px}
 .sheet .c{aspect-ratio:1;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;
-  border:1.5px solid var(--line);cursor:pointer;color:var(--sub);background:#fff}
+  border:1.5px solid var(--line);cursor:pointer;color:var(--sub);background:#fff;position:relative;overflow:hidden}
 .sheet .c.ans{background:var(--brand-soft);border-color:var(--brand);color:var(--brand);font-weight:700}
 .sheet .c.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad);font-weight:700}
 .sheet .c.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:700}
 .sheet .c.cur{outline:2px solid var(--brand)}
+/* ---- 答题卡：题型分组 + 标记笔 + 图例 ---- */
+.sh-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+.sh-head h2{font-size:14px;color:var(--sub);font-weight:600;margin:0}
+.sh-stat{font-size:12px;color:var(--sub);white-space:nowrap}
+.sh-stat b{color:var(--ink)}
+.sh-pens{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
+.pen{display:inline-flex;align-items:center;gap:4px;border:1.5px solid var(--line);background:#fff;color:var(--sub);
+  border-radius:999px;padding:5px 11px;font-size:12.5px;cursor:pointer;transition:.15s;white-space:nowrap}
+.pen:hover{border-color:#c7d4f5;color:var(--brand)}
+.pen.on{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);font-weight:700}
+.pen .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.sh-pens .pen[data-pen="1"] .dot{background:#f59e0b}
+.sh-pens .pen[data-pen="2"] .dot{background:#8b5cf6}
+.sh-pens .pen[data-pen="3"] .dot{background:#0e9f9f}
+.sh-hint{font-size:11.5px;color:var(--sub);line-height:1.6;margin-bottom:9px}
+.sh-legend{display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:11.5px;color:var(--sub);
+  padding-bottom:9px;border-bottom:1px dashed var(--line);margin-bottom:11px}
+.sh-legend span{display:inline-flex;align-items:center;gap:4px}
+.sh-legend .c{width:13px;height:13px;border-radius:4px;border:1.5px solid var(--line);background:#fff;flex:0 0 auto}
+.sh-legend .c.ans{background:var(--brand-soft);border-color:var(--brand)}
+.sh-legend .c.right{background:var(--ok-soft);border-color:var(--ok)}
+.sh-legend .c.wrong{background:var(--bad-soft);border-color:var(--bad)}
+.sh-legend .c.cur{outline:2px solid var(--brand);outline-offset:1px}
+.sh-legend .c.flag{position:relative;overflow:hidden}
+.sh-legend .c.flag::after{content:'';position:absolute;top:0;right:0;width:0;height:0;
+  border-top:11px solid #f59e0b;border-left:11px solid transparent}
+.sh-clear{margin-left:auto;border:1.5px solid var(--bad-soft);background:var(--bad-soft);color:var(--bad);
+  border-radius:999px;padding:4px 11px;font-size:12px;cursor:pointer;white-space:nowrap}
+.sh-grp{margin-bottom:13px}
+.sh-grp:last-child{margin-bottom:0}
+.sh-grp-h{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.sh-grp-h .badge{margin-right:0;font-size:11px;padding:2px 8px;border-radius:7px}
+.sh-grp-n{font-size:11.5px;color:var(--sub)}
+.sh-grp .sheet{margin-top:0}
+/* 标记画成右上角小三角 + 该色描边，刻意不占用底色 —— 底色要留给「已答/答对/答错」，否则两个信号会互相盖掉 */
+.sheet .c.mk{border-color:#f59e0b;border-width:2px}
+.sheet .c.mk.m2{border-color:#8b5cf6}
+.sheet .c.mk.m3{border-color:#0e9f9f}
+.sheet .c.mk::after{content:'';position:absolute;top:0;right:0;width:0;height:0;
+  border-top:15px solid #f59e0b;border-left:15px solid transparent}
+.sheet .c.mk.m2::after{border-top-color:#8b5cf6}
+.sheet .c.mk.m3::after{border-top-color:#0e9f9f}
 .timer{font-weight:700;color:var(--brand)}
+/* 练习中的用时小时钟（考试模式不显示，那时看倒计时） */
+.elapsed{font-weight:700;color:var(--brand);white-space:nowrap}
+.pinfo-r{display:flex;align-items:center;gap:12px}
 .result-big{text-align:center;padding:10px 0 6px}
 .score-num{font-size:54px;font-weight:800;color:var(--brand)}
-.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}
+/* 4 格：总题数 / 答对 / 答错 / 做题用时 */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
 .stat{background:var(--chip);border-radius:12px;padding:14px;text-align:center}
-.stat .n{font-size:22px;font-weight:800}
+.stat .n{font-size:22px;font-weight:800;white-space:nowrap}
+/* 用时是「12分34秒」这种多字文本，比纯数字窄一号才不会挤出格子 */
+.stat .n.dur{font-size:18px}
 .stat .l{font-size:12px;color:var(--sub)}
 .wrong-list{margin-top:8px;display:flex;flex-direction:column;gap:10px}
 .wl-item{border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px}
@@ -203,6 +274,8 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
   .ec-row .ec-num{width:74px}
   .ec-mini{height:38px;min-width:38px}
   .ec-max{min-width:auto;padding:0 12px}
+  .ec-total-in{width:82px}
+  .ec-fit{min-width:auto;padding:0 12px}
   .ec-sum{text-align:left}
   .ec-actions .btn{flex:1 1 calc(50% - 4px)}
   input[type=number]{width:72px;padding:9px 8px;font-size:15px}
@@ -215,16 +288,33 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
   .opt .txt{font-size:15px}
   .judge-btns{gap:10px}
   .bg{padding:11px 12px;font-size:13px;margin:8px 0 12px}
-  .answer-line{font-size:13px;padding:10px 12px}
+  .fb-line{font-size:13px;padding:9px 12px;gap:8px}
   .feedback{font-size:13px;padding:11px 12px}
   .pinfo{font-size:11px}
   .timer{font-size:13px}
+  .elapsed{font-size:12px}
+  .pinfo-r{gap:9px}
   .sheet{grid-template-columns:repeat(7,1fr);gap:5px}
   .sheet .c{font-size:11px}
+  /* 答题卡窄屏：标记笔/图例整体缩一号，避免挤成三行 */
+  .sh-pens{gap:5px}
+  .pen{padding:4px 9px;font-size:11.5px;gap:3px}
+  .pen .dot{width:8px;height:8px}
+  .sh-hint{font-size:11px}
+  .sh-legend{gap:9px;font-size:11px;margin-bottom:9px}
+  .sh-legend .c{width:12px;height:12px;border-radius:3px}
+  .sh-legend .c.flag::after{border-top-width:10px;border-left-width:10px}
+  .sheet .c.mk::after{border-top-width:13px;border-left-width:13px}
+  .sh-clear{padding:3px 9px;font-size:11.5px}
+  .sh-grp{margin-bottom:11px}
+  .sh-grp-h .badge{font-size:10.5px;padding:2px 7px}
+  .sh-stat{font-size:11px}
   .score-num{font-size:44px}
-  .stat-grid{gap:8px}
+  /* 手机上 4 格一行排不下，改成 2×2（用时那格文字最长，字号再降一档） */
+  .stat-grid{gap:8px;grid-template-columns:repeat(2,1fr)}
   .stat{padding:12px 8px}
   .stat .n{font-size:19px}
+  .stat .n.dur{font-size:16px}
   .stat .l{font-size:11px}
   .wl-item{padding:11px 12px;font-size:13.5px}
   .nav{gap:8px;padding:9px 14px;padding-bottom:calc(9px + env(safe-area-inset-bottom,0px))}
@@ -265,6 +355,10 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0;font-weight:600}
 .modal-x{border:none;background:transparent;font-size:18px;color:#64748b;cursor:pointer}
 .modal-body{padding:14px 16px;overflow:auto}
+/* 错题集 / 收藏回顾弹窗顶部的「该模式上次练到哪」提示 */
+.lib-resume{font-size:12.5px;line-height:1.5;color:#0c7a47;font-weight:600;
+  background:var(--ok-soft);border-radius:10px;padding:8px 12px;margin:2px 0 12px}
+.lib-resume b{font-weight:800}
 .lib-sec{margin:6px 0 14px}
 .lib-sec-h{font-size:13px;font-weight:700;color:#334155;margin:4px 0 8px}
 .lib-sec-n{font-size:12px;font-weight:500;color:var(--sub);margin-left:4px}

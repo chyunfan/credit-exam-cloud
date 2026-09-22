@@ -1,6 +1,7 @@
 import {
   LS, loadArr, saveArr, addId, removeId, hasId, countId,
-  clearProgress, saveProgress, loadProgress
+  clearProgress, saveProgress, loadProgress, loadProgressMap,
+  markOf, setMark, markCount, clearMarks
 } from './store.js';
 import { supabase, getUserId } from './supabase.js';
 
@@ -11,22 +12,34 @@ export function setQuestions(arr) { QUESTIONS = Array.isArray(arr) ? arr : []; }
 // ---------- state ----------
 const EXAM_DEFAULT_COUNTS = { single: 60, multiple: 40, judge: 20, case: 5 };
 const EXAM_TYPES = ['single', 'multiple', 'judge', 'case'];
+const EXAM_DEFAULT_TOTAL = 100;        // 组卷目标总分默认值（可改）
+// 四种练习模式（进度按模式各存一份，首页四张卡片也靠这张表取名字）
+const MODE_NAME = { sequential: '顺序练习', exam: '组卷模拟考试', wrong: '错题练习', fav: '收藏练习' };
+const MODE_NAME_SHORT = { sequential: '顺序练习', exam: '模拟考试', wrong: '错题练习', fav: '收藏练习' };
+const MODES = ['sequential', 'exam', 'wrong', 'fav'];
 
 const S = {
   mode: 'sequential', types: { single: true, multiple: true, judge: true, case: true },
   showAns: false, rmAll: true, rmCorrectJudge: true, revealAfter: false, autoRemoveWrong: true,
   examCounts: Object.assign({}, EXAM_DEFAULT_COUNTS),
   examPoints: { single: 0.5, multiple: 1, judge: 0.5, case: 4 },
+  examTotal: EXAM_DEFAULT_TOTAL,   // 组卷目标总分：用户可以改，题量按它自动配
   examMin: 90,
   bankId: null,
-  examCfgByBank: {},        // { [题库id]: { counts, min, updatedAt } } —— 组卷配置按题库各存一份
+  examCfgByBank: {},        // { [题库id]: { counts, total, min, updatedAt } } —— 组卷配置按题库各存一份
   fullScore: 100,           // 本次组卷的理论满分（自选题量后不再是固定 100）
   pool: [], idx: 0, userAns: [], revealed: [], correctCount: 0, questionPts: [],
-  timer: null, deadline: 0, finished: false
+  timer: null, deadline: 0, finished: false,
+  // 做题用时：elapsedMs = 已结算的毫秒数，elapsedAt = 本段起算时刻（0 表示「已停表」），
+  // etick = 练习页那个每秒刷新的小时钟句柄，lastUsedMs = 本次结果页要显示的最终用时
+  elapsedMs: 0, elapsedAt: 0, etick: null, lastUsedMs: 0
 };
 const TYPE_NAME = { single: '单选题', multiple: '多选题', judge: '判断题', case: '案例题' };
 const TYPE_CLS = { single: 'b-single', multiple: 'b-multi', judge: 'b-judge', case: 'b-case' };
 const TYPE_UNIT = { single: '题', multiple: '题', judge: '题', case: '组' };
+// 答题卡上的标记笔：0 = 擦除，'jump' = 不标记、只跳题
+const MARK_COLORS = { 1: '存疑', 2: '重点', 3: '待查' };
+const SHEET_TYPES = ['single', 'multiple', 'judge', 'case'];
 
 function $(id) { return document.getElementById(id); }
 
@@ -44,7 +57,7 @@ function settingsSnapshot() {
   return {
     mode: S.mode, types: S.types, showAns: S.showAns, rmAll: S.rmAll,
     rmCorrectJudge: S.rmCorrectJudge, revealAfter: S.revealAfter, autoRemoveWrong: S.autoRemoveWrong,
-    examCounts: S.examCounts, examPoints: S.examPoints, examMin: S.examMin,
+    examCounts: S.examCounts, examPoints: S.examPoints, examTotal: S.examTotal, examMin: S.examMin,
     examCfgByBank: S.examCfgByBank,
     updatedAt: Date.now()
   };
@@ -57,6 +70,7 @@ function applySettings(c) {
   S.autoRemoveWrong = (c.autoRemoveWrong === undefined ? true : !!c.autoRemoveWrong);
   if (c.examPoints) S.examPoints = Object.assign(S.examPoints, c.examPoints);
   S.examCounts = Object.assign({}, EXAM_DEFAULT_COUNTS, c.examCounts || {});
+  S.examTotal = Number(c.examTotal) > 0 ? Number(c.examTotal) : EXAM_DEFAULT_TOTAL;
   S.examMin = c.examMin || 90;
   if (c.examCfgByBank && typeof c.examCfgByBank === 'object') S.examCfgByBank = Object.assign({}, c.examCfgByBank);
   loadBankExamCfg();          // 题库级配置优先于"上次用过的配置"
@@ -74,20 +88,105 @@ export function setBankKey(id) {
 /**
  * 载入当前题库的组卷配置。
  *  · 该题库存过配置 → 原样带出（含用户改大的量，超量时由黄色提醒说明）；
- *  · 没存过（新导入的题库）→ 给一套"标准 100 分"配置，并按题库实际可用量收敛，
- *    免得刚进来就满屏"题库不足"。用户仍可自行改大。
+ *  · 没存过（新导入的题库）→ 按「标准配置的题型比例」自动配到目标总分（默认 100 分），
+ *    题库里没有的题型直接归零、它的份额让给其它题型，免得刚进来就满屏"题库不足"。
  */
 function loadBankExamCfg() {
   if (!S.bankId) return;
   const c = S.examCfgByBank[S.bankId];
   if (c && c.counts) {
     S.examCounts = Object.assign({ single: 0, multiple: 0, judge: 0, case: 0 }, c.counts);
+    if (c.total) S.examTotal = clampTotal(c.total);
     if (c.min) S.examMin = c.min;
     return;
   }
   if (!QUESTIONS.length) { S.examCounts = Object.assign({}, EXAM_DEFAULT_COUNTS); return; }
+  applyDefaultPlan();
+}
+
+/**
+ * 目标总分收敛到 1..999 的整数。
+ * 填 0 / 负数 / 清空 / 非法输入 → 回到默认 100 分（总分 0 的卷子没有意义，多半是误操作）。
+ */
+function clampTotal(v) {
+  const n = Math.round(parseFloat(v));
+  if (!isFinite(n) || n < 1) return EXAM_DEFAULT_TOTAL;
+  return Math.min(999, n);
+}
+
+/**
+ * 回到「标准 100 分整卷」。
+ * 新题库（该题库没存过配置）与「恢复默认（100 分）」都走这里：
+ * 目标总分回到默认值 —— **不沿用上一个题库的总分**，这样"每个题库各有一套组卷配置"的行为才一致。
+ */
+function applyDefaultPlan(total) {
+  S.examTotal = clampTotal(total === undefined ? EXAM_DEFAULT_TOTAL : total);
+  S.examCounts = Object.assign({}, EXAM_DEFAULT_COUNTS);
   const avail = availByType();
-  EXAM_TYPES.forEach(t => { S.examCounts[t] = Math.min(EXAM_DEFAULT_COUNTS[t], avail[t] || 0); });
+  EXAM_TYPES.forEach(t => { if (!(avail[t] > 0)) S.examCounts[t] = 0; });
+  fitToTotal(S.examTotal);
+}
+
+/**
+ * 按目标总分自动配题。
+ * ------------------------------------------------------------
+ * 权重取「当前各题型的分值占比」（= 用户现在的配题意图），整体等比缩放到目标总分；
+ * 当前配置全为 0 时退化为「标准配置」的占比，再退化为等分。
+ * 只处理题库里**真实存在**的题型 —— 题库没有的题型一律归 0、不参与组卷，
+ * 它原本占的份额会被让给其它题型（这就是"没有案例题的题库默认也能满 100 分"的原因）。
+ * 题库题量不够时收敛到上限，由汇总行如实说明"本卷最多多少分"。
+ */
+function fitToTotal(target) {
+  const want = clampTotal(target);
+  const avail = availByType();
+  const present = EXAM_TYPES.filter(t => (avail[t] || 0) > 0);
+  if (!present.length) { EXAM_TYPES.forEach(t => { S.examCounts[t] = 0; }); return want; }
+  const pts = t => S.examPoints[t] || 1;
+
+  // 1) 权重：当前配置的分值占比（= 用户现在的配题意图）→ 全 0 时用标准配置的占比 → 再不行等分
+  const w = {};
+  let wsum = 0;
+  present.forEach(t => { w[t] = (S.examCounts[t] || 0) * pts(t); wsum += w[t]; });
+  if (wsum <= 0) present.forEach(t => { w[t] = (EXAM_DEFAULT_COUNTS[t] || 0) * pts(t); wsum += w[t]; });
+  if (wsum <= 0) present.forEach(t => { w[t] = 1; wsum += 1; });
+
+  // 2) 初值：把目标分按权重分摊给各题型，再折算成题数（四舍五入，并收敛到可用量）
+  const ideal = {}, n = {};
+  present.forEach(t => {
+    ideal[t] = want * w[t] / wsum;
+    n[t] = Math.max(0, Math.min(avail[t], Math.round(ideal[t] / pts(t))));
+  });
+
+  // 3) 双向局部搜索：每步只做「+1 题 / −1 题」，接受让总分更接近目标的走法；
+  //    总分差打平时挑「离理想分值最近」的，配比才不会被 1 分/题的题型带偏。
+  const scoreOf = () => present.reduce((s, t) => s + n[t] * pts(t), 0);
+  const errOf = () => present.reduce((s, t) => s + Math.abs(ideal[t] - n[t] * pts(t)), 0);
+  for (let guard = 0; guard < 2000; guard++) {
+    const cur = scoreOf();
+    const gap0 = Math.abs(want - cur);
+    if (gap0 < 1e-9) break;
+    let best = null;
+    present.forEach(t => {
+      [-1, 1].forEach(d => {
+        const nv = n[t] + d;
+        if (nv < 0 || nv > avail[t]) return;
+        const g = Math.abs(want - (cur + d * pts(t)));
+        if (g > gap0 - 1e-9) return;                       // 只走"更接近目标"的那一步
+        const saved = n[t]; n[t] = nv;
+        const e = errOf();
+        n[t] = saved;
+        if (!best || g < best.g - 1e-9 || (Math.abs(g - best.g) < 1e-9 && e < best.e - 1e-9)) {
+          best = { t, d, g, e };
+        }
+      });
+    });
+    if (!best) break;                                      // 题库给不了更接近的分数了
+    n[best.t] += best.d;
+  }
+
+  // 4) 写回：题库没有的题型一律归 0
+  EXAM_TYPES.forEach(t => { S.examCounts[t] = present.includes(t) ? n[t] : 0; });
+  return want;
 }
 
 /**
@@ -110,7 +209,7 @@ function availByType() {
 }
 function saveBankExamCfg() {
   if (!S.bankId) return;
-  S.examCfgByBank[S.bankId] = { counts: Object.assign({}, S.examCounts), min: S.examMin, updatedAt: Date.now() };
+  S.examCfgByBank[S.bankId] = { counts: Object.assign({}, S.examCounts), total: S.examTotal, min: S.examMin, updatedAt: Date.now() };
   showEcSaved();
 }
 function showEcSaved() {
@@ -199,11 +298,15 @@ export async function syncPrefsFromCloud() {
 // ============================================================
 // 组卷设置：题型行按「当前题库实际有的题型」动态生成
 // ------------------------------------------------------------
+//  · 组卷口径：先定「试卷总分」（默认 100 分，可改），题量按它自动配；
+//    也可以直接微调各题型题量，满分实时回算。
+//  · **题库里没有的题型不参与组卷**：不出现题型行、不参与配分、不进"题库不足"提醒。
+//    用户把某题型从「题目类型」里勾掉时同样按"不参与"处理（它的份额让给其它题型）。
 //  · 可用量口径与真正抽题完全一致（同一份 buildPool）：
 //    受「题目类型」勾选与「去除多选全选 / 去除正确判断题」开关影响；
 //  · 案例题按「组」计，可用量 = 题库里案例组数；
 //  · 题量可自行定义，超量自动收敛到可用量并给出提示；
-//  · 配置按题库保存（examCfgByBank），下次进入该题库自动带出。
+//  · 配置（题量 + 目标总分）按题库保存（examCfgByBank），下次进入该题库自动带出。
 // ============================================================
 /** 计划抽题量与实际可用量（与 sampleExam 同一口径） */
 function examPlan() {
@@ -225,10 +328,15 @@ function examPlan() {
   return { avail, present, planned, caseQs, poolTotal: pool.length, caseGroups: caseArr.length };
 }
 
-/** 按「配置的题量」算的满分（不考虑题库是否够） */
+/**
+ * 按「配置的题量」算的满分（不收敛到可用量，用于和实际满分对照）。
+ * 题库里没有的题型不参与组卷 → 也就不算进本卷配置满分
+ * （否则题库没案例题时会出现"按配置应为 100 分"这种看不懂的提示）。
+ */
 function configFullScore() {
-  const c = S.examCounts, p = S.examPoints;
-  return Math.round(EXAM_TYPES.reduce((s, t) => s + (c[t] || 0) * (p[t] || 0), 0) * 10) / 10;
+  const plan = examPlan(), c = S.examCounts, p = S.examPoints;
+  return Math.round(EXAM_TYPES.reduce(
+    (s, t) => s + (plan.avail[t] > 0 ? (c[t] || 0) * (p[t] || 0) : 0), 0) * 10) / 10;
 }
 /** 按「实际会抽到的题量」（min(配置, 可用)）算的满分 —— 这才是考试真正能拿到的上限 */
 function examFullScore() {
@@ -236,22 +344,38 @@ function examFullScore() {
   return Math.round(EXAM_TYPES.reduce((s, t) => s + Math.min(S.examCounts[t] || 0, plan.avail[t]) * (p[t] || 0), 0) * 10) / 10;
 }
 
-/** 渲染汇总行：已选题量 + 理论满分 + 超量提醒（不做 DOM 重建） */
+/** 渲染汇总行：已选题量 + 本卷满分（对照目标总分）+ 超量提醒（不做 DOM 重建） */
 function updateMaxScore() {
   const plan = examPlan();
   const cfgScore = configFullScore();
   S.fullScore = examFullScore();
   const total = EXAM_TYPES.reduce((s, t) => s + (S.examCounts[t] || 0), 0);
+  // 参与组卷的只有题库里真实存在的题型
+  const present = EXAM_TYPES.filter(t => plan.avail[t] > 0);
+  const target = clampTotal(S.examTotal);
+  const r1 = v => Math.round(v * 10) / 10;
+
   const sum = $('ecSummary');
   if (sum) {
-    let h = '已选 <b>' + total + '</b> 项 · 理论满分 <b id="maxScore">' + S.fullScore + '</b> 分';
-    if (cfgScore !== S.fullScore) h += ' <span class="muted">（按配置应为 ' + cfgScore + ' 分，题库不足）</span>';
+    let h = '已选 <b>' + total + '</b> 项 · 本卷满分 <b id="maxScore">' + S.fullScore + '</b> 分';
+    h += ' <span class="muted">· 目标 ' + target + ' 分</span>';
+    if (Math.abs(S.fullScore - target) < 1e-9) {
+      h += ' <span class="ec-hit">✓ 正好</span>';
+    } else if (present.length && present.every(t => (S.examCounts[t] || 0) >= plan.avail[t])) {
+      // 每种题型都取到题库上限了，说明是题库题量不够，而不是配置有问题
+      h += ' <span class="muted">（题库题量已全部用上，本卷最多 ' + S.fullScore + ' 分）</span>';
+    } else {
+      h += ' <span class="muted">（' + (S.fullScore < target
+        ? '还差 ' + r1(target - S.fullScore) + ' 分'
+        : '超出 ' + r1(S.fullScore - target) + ' 分') + '）</span>';
+    }
+    if (cfgScore !== S.fullScore) h += ' <span class="muted">· 按配置应为 ' + cfgScore + ' 分，题库不足</span>';
     if (plan.caseQs > 0) h += ' <span class="muted">· 案例按组抽，实际约 ' + (plan.planned + plan.caseQs) + ' 道小题</span>';
     sum.innerHTML = h;
   }
-  // 超量提醒：配置数大于可用量时，实际只抽可用量
+  // 超量提醒：只针对题库里真实存在的题型 —— 题库没有的题型不参与组卷，不该在这里出现
   const short = [];
-  EXAM_TYPES.forEach(t => {
+  present.forEach(t => {
     const want = S.examCounts[t] || 0;
     if (want > plan.avail[t]) short.push(TYPE_NAME[t] + ' 配置 ' + want + ' ' + TYPE_UNIT[t] + '，题库仅 ' + plan.avail[t] + ' ' + TYPE_UNIT[t]);
   });
@@ -263,18 +387,28 @@ function updateMaxScore() {
   // 首页「组卷模拟考试」卡片上的摘要
   const card = $('examCounts');
   if (card) {
-    const list = EXAM_TYPES.filter(t => plan.avail[t] > 0).map(t => TYPE_NAME[t].replace('题', '') + ' ' + (S.examCounts[t] || 0) + TYPE_UNIT[t]);
+    const list = present.map(t => TYPE_NAME[t].replace('题', '') + ' ' + (S.examCounts[t] || 0) + TYPE_UNIT[t]);
     card.textContent = list.length ? list.join(' · ') + '｜满分 ' + S.fullScore + ' 分 · ' + S.examMin + ' 分钟' : '当前题库暂无可用题目';
   }
   return S.fullScore;
 }
 
-/** 让输入框显示值跟随状态（仅在非输入状态下调用，避免打断打字） */
-function syncEcInputs() {
+/**
+ * 让输入框显示值跟随状态。
+ * @param {boolean} force 重建题型行 / 切题库时置 true：连「试卷总分」也强制同步。
+ *   平时不打断正在打字的人，但切题库必须强制同步 —— 否则输入框里会留着上一个
+ *   题库的旧总分，浏览器随后补发的 change 会拿旧值把刚算好的新配置又覆盖一遍。
+ */
+function syncEcInputs(force) {
   document.querySelectorAll('#ecRows .ec').forEach(inp => {
     const v = S.examCounts[inp.dataset.t] || 0;
     if (String(inp.value) !== String(v)) inp.value = v;
   });
+  const tt = $('ecTotal');
+  if (tt && (force || document.activeElement !== tt)) {
+    const v = String(clampTotal(S.examTotal));
+    if (tt.value !== v) tt.value = v;
+  }
 }
 
 let _ecSig = '';
@@ -291,7 +425,7 @@ function renderExamCfg(force) {
   const availEl = $('ecAvail');
   if (availEl) {
     availEl.textContent = plan.poolTotal
-      ? '本库当前可用 ' + plan.poolTotal + ' 题（受「题目类型」与「去除」开关影响），题型与题量可自行定义：'
+      ? '本库当前可用 ' + plan.poolTotal + ' 题（受「题目类型」与「去除」开关影响）。题库里没有的题型不参与组卷，只会出现下面这几行：'
       : '当前题库/筛选下没有可用题目，请调整「题目类型」或「练习选项」。';
   }
   if (force || sig !== _ecSig) {
@@ -309,7 +443,7 @@ function renderExamCfg(force) {
         '</div></div>';
     }).join('');
   }
-  syncEcInputs();
+  syncEcInputs(force);
   updateMaxScore();
 }
 
@@ -341,6 +475,26 @@ function revealMode(q, i) {
   if (S.revealAfter && !r.multi && isAnswered(S.userAns[i])) return 'full';
   if (S.revealed[i]) return 'full';
   return null;
+}
+
+/**
+ * 作答锁定：这道题的答案一旦"回显"，就不允许再改选。
+ * ------------------------------------------------------------
+ * 触发时机（也就是用户实际会遇到的两种）：
+ *  ① 单选 / 判断题：开了「选完展示正确答案」，点下去答案就回显了 → 立即锁；
+ *  ② 多选题：点「确定」核对、答案回显 → 立即锁（在此之前可以自由增减，多选本来就要点好几下）。
+ * 锁定后点选项不再有任何反应（onPick 直接返回），题面转成"只看不改"，避免看着正确答案改答案。
+ *
+ * 两个例外，都是刻意留的：
+ *  ·「看答案」开关（S.showAns）是"全程显示答案"的浏览姿势，不算提交 → 不锁；
+ *  · 没回显答案的题（顺序练习默认设置）仍可改选 → 不锁，保留"先想清楚再定"的自由。
+ */
+function isLocked(q, i) {
+  const k = (i === undefined) ? S.idx : i;
+  if (!q || S.showAns) return false;
+  if (S.revealed[k]) return true;
+  const r = getRender(q);
+  return !!(S.revealAfter && !r.multi && isAnswered(S.userAns[k]));
 }
 function buildPool() {
   if (S.mode === 'wrong' || S.mode === 'fav') {
@@ -437,6 +591,7 @@ function snapshotProgress(rem) {
     revealed: Array.isArray(S.revealed) ? S.revealed.slice() : [],
     questionPts: Array.isArray(S.questionPts) ? S.questionPts.slice() : [],
     remainingMs: (typeof rem === 'number' && rem > 0) ? rem : currentRemaining(),
+    elapsedMs: usedMs(),          // 做题用时（含本段正在跑的时间），恢复时接着累计
     answered: answered,
     total: S.pool.length,
     finished: false,
@@ -471,7 +626,7 @@ function start(p, atIdx) {
     if (pool.length === 0) { alert('当前筛选条件下没有可用题目，请调整设置。'); return; }
     if (S.mode === 'exam') pool = sampleExam(pool, S.examCounts);
   }
-  if (pool.length === 0) { alert('没有可用题目，请返回首页调整设置。'); clearProgress(); return; }
+  if (pool.length === 0) { alert('没有可用题目，请返回首页调整设置。'); clearProgress(S.mode); return; }
   S.pool = pool;
   S.questionPts = S.mode === 'exam' ? assignPts(pool) : [];
   // 组卷满分随「自选题量」而变：开考时按实际抽到的题定死（结果页按它显示 "得分 / 满分"）
@@ -486,19 +641,28 @@ function start(p, atIdx) {
   }
   if (atIdx !== undefined && atIdx >= 0 && atIdx < S.pool.length) S.idx = atIdx;
   S.correctCount = 0; S.finished = false;
+  // 做题用时：从头开始 = 归零重开表；继续练习 = 接着上次的累计值起表（不含退出期间的空档）
+  if (resumed) {
+    S.elapsedMs = (typeof p.elapsedMs === 'number' && p.elapsedMs > 0) ? p.elapsedMs : 0;
+    S.elapsedAt = Date.now();
+  } else resetElapsed();
   saveSettings();
   $('home').classList.add('hide');
   $('result').classList.add('hide');
   $('practice').classList.remove('hide');
   $('examCfg').classList.toggle('hide', S.mode !== 'exam');
-  const modeName = S.mode === 'exam' ? '组卷模拟考试' : (S.mode === 'wrong' ? '错题练习' : (S.mode === 'fav' ? '收藏练习' : '顺序练习'));
+  const modeName = MODE_NAME[S.mode] || MODE_NAME.sequential;
   $('modeTag').textContent = modeName + ' · 共 ' + S.pool.length + ' 题';
-  $('sheetToggle').classList.toggle('hide', S.mode !== 'exam');
-  $('sheetCard').classList.add('hide');
-  $('sheetArr').textContent = '▾';
-  $('sheetToggle').classList.remove('open');
+  $('sheetToggle').classList.remove('hide');    // 答题卡任何模式都能看（题型分组 + 已答未答 + 彩色标记）
+  closeSheet();
   $('checkBtn').classList.toggle('hide', S.mode === 'exam' || S.showAns);
-  if (S.mode === 'exam') startTimer(rem); else stopTimer();
+  const es = $('elapsedSpan');
+  if (S.mode === 'exam') {
+    // 考试已经有倒计时了，不再叠一个正计时（要看清"还剩多久"，不要两个表打架）
+    startTimer(rem); stopElapsedTicker(); if (es) es.classList.add('hide');
+  } else {
+    stopTimer(); if (es) es.classList.remove('hide'); startElapsedTicker();
+  }
   renderSheet();
   renderQuestion();
   saveSnapshot(rem);
@@ -520,6 +684,40 @@ function tick() {
   if (left <= 0) { stopTimer(); finishExam(true); }
 }
 
+// ---------- 做题用时 ----------
+// 为什么用「已结算 + 本段」两段式：练习可以中途退出、刷新、切后台，
+// 只存一个开始时刻的话，恢复时会把「退出期间挂掉的那些时间」也算进去。
+// 所以：退出 / 交卷 / 切后台 → pauseElapsed() 把本段结算进 elapsedMs 并停表；
+// 继续练习 → 重新起表接着累计（恢复出来的用时 = 上次练到哪儿的时间，不含中间空档）。
+function usedMs() {
+  return (S.elapsedMs || 0) + (S.elapsedAt ? Math.max(0, Date.now() - S.elapsedAt) : 0);
+}
+function markElapsed() { S.elapsedMs = usedMs(); S.elapsedAt = Date.now(); }   // 结算后继续跑
+function pauseElapsed() { S.elapsedMs = usedMs(); S.elapsedAt = 0; }          // 结算并停表
+function resetElapsed() { S.elapsedMs = 0; S.elapsedAt = Date.now(); }        // 重新开表
+/** 计时态紧凑写法：12:34 / 1:02:34 */
+function clockText(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  const p = n => (n < 10 ? '0' : '') + n;
+  return h > 0 ? (h + ':' + p(m) + ':' + p(s)) : (m + ':' + p(s));
+}
+/** 给人读的时长：45秒 / 12分34秒 / 1小时02分03秒 */
+function humanDuration(ms) {
+  const t = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  const p = n => (n < 10 ? '0' : '') + n;
+  if (h > 0) return h + '小时' + p(m) + '分' + p(s) + '秒';
+  if (m > 0) return m + '分' + p(s) + '秒';
+  return s + '秒';
+}
+function tickElapsed() {
+  const el = $('elapsedSpan');
+  if (el) el.textContent = '⏱ 用时 ' + clockText(usedMs());
+}
+function startElapsedTicker() { stopElapsedTicker(); tickElapsed(); S.etick = setInterval(tickElapsed, 1000); }
+function stopElapsedTicker() { if (S.etick) { clearInterval(S.etick); S.etick = null; } }
+
 // ---------- question render ----------
 function renderQuestion() {
   const q = S.pool[S.idx];
@@ -536,12 +734,15 @@ function renderQuestion() {
   const r = getRender(q);
   const ans = S.userAns[S.idx];
   const mode = revealMode(q, S.idx);
+  const locked = isLocked(q, S.idx);          // 已回显答案 → 选项只读，不允许再改选
+  const lockCls = locked ? ' lock' : '';
   const favOn = hasId(LS.fav, q.id);
   let html = '<div class="qhead">' + badge + '<button type="button" class="favBtn ' + (favOn ? 'on' : '') + '" id="favBtn" title="收藏此题">★</button></div>' + bgHtml + '<div class="stem">' + escapeHtml(String(q.stem).replace(/\s+/g, ' ').trim()) + '</div>';
   if (r.judge) {
-    html += '<div class="judge-btns" id="opts">';
+    html += '<div class="judge-btns' + lockCls + '" id="opts">';
     r.choices.forEach((c, i) => {
       let cls = 'opt';
+      if (locked) cls += ' lock';
       if (ans === i) cls += ' sel';
       if (mode === 'full') {
         if (i === r.correctIndex) cls += ' ok';
@@ -552,9 +753,10 @@ function renderQuestion() {
     });
     html += '</div>';
   } else {
-    html += '<div class="opts" id="opts">';
+    html += '<div class="opts' + lockCls + '" id="opts">';
     r.choices.forEach((c, i) => {
       let cls = 'opt';
+      if (locked) cls += ' lock';
       const selHere = Array.isArray(ans) ? ans.includes(i) : ans === i;
       if (selHere) cls += ' sel';
       if (mode === 'full') {
@@ -566,15 +768,19 @@ function renderQuestion() {
     });
     html += '</div>';
   }
-  let fb = '', ansLine = '';
+  // 对错与正确答案合并成一行：左侧小胶囊表对错，右侧接正确答案（省一行高度）
+  let fbLine = '';
   if (mode) {
+    let pill = '';
     if (mode === 'full') {
       const correct = isCorrect(q, S.idx);
-      fb = '<div class="feedback show ' + (correct ? 'ok' : 'no') + '">' + (correct ? '✓ 回答正确' : '✗ 回答错误') + '</div>';
+      pill = '<span class="fb-pill ' + (correct ? 'ok' : 'no') + '">' + (correct ? '✓ 回答正确' : '✗ 回答错误') + '</span>';
     }
-    ansLine = '<div class="answer-line show">正确答案：<b>' + escapeHtml(answerKeysStr(q)) + '</b></div>';
+    fbLine = '<div class="fb-line show">' + pill +
+      '<span class="ans-key">正确答案：<b>' + escapeHtml(answerKeysStr(q)) + '</b></span>' +
+      (locked ? '<span class="fb-lock">🔒 已锁定</span>' : '') + '</div>';
   }
-  html += fb + ansLine;
+  html += fbLine;
   $('qBody').innerHTML = html;
   const optsEl = $('opts');
   if (optsEl && !S.finished) {
@@ -618,6 +824,8 @@ function recordWrong(q) {
   else { addId(LS.wrong, q.id); }
 }
 function onPick(q, i, r) {
+  // 答案已回显（「选完展示正确答案」/ 多选点过「确定」）→ 本题作答已定格，点选项不再有任何反应
+  if (isLocked(q, S.idx)) return;
   if (r.multi) {
     let a = S.userAns[S.idx];
     if (!Array.isArray(a)) a = [];
@@ -674,25 +882,98 @@ function userText(q, i) {
   return Array.isArray(a) ? a.map(x => r.keys[x] + '. ' + r.choices[x]).join('；') : r.keys[a] + '. ' + r.choices[a];
 }
 
-// ---------- sheet ----------
+// ---------- sheet（答题卡） ----------
+// 四种信号叠在一格上，各占一个视觉通道，互不覆盖：
+//  ① 底色/边框 → 未答(灰) / 已答(蓝) / 已看过答案(绿=对、红=错)
+//  ② 右上角小三角 → 自己的标记色（黄 存疑 / 紫 重点 / 青 待查），所以"已答"和"标记"能同时看见
+//  ③ 外描边 → 当前题
+//  ④ 题型：按单选题/多选题/判断题/案例题分组，组头带题型徽标与该组已答数
+// 点击行为由当前选中的工具决定：选「跳转」= 跳题；选某支笔 = 上色/取消；选「擦除」= 去掉标记。
+let _markPen = 'jump';
+
+function sheetHintText() {
+  if (_markPen === 'jump') return '点题号直接跳到该题。要标记，先在上面选一支笔。';
+  if (_markPen === '0') return '擦除：点题号去掉它原有的标记。';
+  return '已选「' + MARK_COLORS[_markPen] + '」笔：点题号上色，再点一次取消（此时点题号不会跳题）。';
+}
+function isAnsweredCell(a) {
+  return a !== null && a !== undefined && !(Array.isArray(a) && a.length === 0);
+}
+
 function renderSheet() {
-  if (S.mode !== 'exam') return;
-  const el = $('sheet'); let h = ''; let answered = 0;
-  for (let i = 0; i < S.pool.length; i++) {
-    let cls = 'c';
-    if (i === S.idx) cls += ' cur';
-    const a = S.userAns[i];
-    const ans = a !== null && !(Array.isArray(a) && a.length === 0);
-    if (ans) { answered++; cls += ' ans'; }
-    h += '<div class="' + cls + '" data-go="' + i + '">' + (i + 1) + '</div>';
+  const el = $('sheet');
+  if (!el || !S.pool) return;
+  const total = S.pool.length;
+  // 按题型分桶（保持题库/抽题时的原始顺序，只做分组）
+  const byType = {};
+  for (let i = 0; i < total; i++) {
+    const q = S.pool[i];
+    const t = q.isCase ? 'case' : q.type;
+    if (!byType[t]) byType[t] = [];
+    byType[t].push(i);
   }
+  let h = '', answered = 0, marks = 0;
+  SHEET_TYPES.concat(Object.keys(byType)).forEach(t => {
+    const list = byType[t];
+    if (!list || !list.length) return;
+    byType[t] = null;                       // 防止后面的 concat 重复渲染同一个题型
+    let gAns = 0;
+    list.forEach(i => { if (isAnsweredCell(S.userAns[i])) gAns++; });
+    answered += gAns;
+    h += '<div class="sh-grp" data-t="' + t + '"><div class="sh-grp-h">' +
+      '<span class="badge ' + (TYPE_CLS[t] || 'b-single') + '">' + (TYPE_NAME[t] || t) + '</span>' +
+      '<span class="sh-grp-n">' + list.length + ' 题 · 已答 ' + gAns + '</span></div><div class="sheet">';
+    list.forEach(i => {
+      const q = S.pool[i];
+      const a = S.userAns[i];
+      let cls = 'c';
+      if (isAnsweredCell(a)) {
+        // 已经看过答案的（自己核对过 / 开了看答案）才显对错，没看过的只显"已答"
+        if (revealMode(q, i) === 'full') cls += isCorrect(q, i) ? ' right' : ' wrong';
+        else cls += ' ans';
+      }
+      if (i === S.idx) cls += ' cur';
+      const mk = markOf(q.id);
+      if (mk) { cls += ' mk m' + mk; marks++; }
+      h += '<div class="' + cls + '" data-go="' + i + '" title="第 ' + (i + 1) + ' 题">' + (i + 1) + '</div>';
+    });
+    h += '</div></div>';
+  });
   el.innerHTML = h;
-  const sc = $('sheetCount'); if (sc) sc.textContent = '(' + answered + '/' + S.pool.length + ')';
+
+  const sc = $('sheetCount'); if (sc) sc.textContent = '(' + answered + '/' + total + ')';
+  const st = $('sheetStat');
+  if (st) {
+    st.innerHTML = '已答 <b>' + answered + '</b> · 未答 <b>' + (total - answered) + '</b>' +
+      (marks ? ' · 标记 <b>' + marks + '</b>' : '');
+  }
+  const clr = $('sheetClearMarks'); if (clr) clr.classList.toggle('hide', marks === 0);
+  const hint = $('sheetHint'); if (hint) hint.textContent = sheetHintText();
+  document.querySelectorAll('#sheetPens .pen').forEach(b => b.classList.toggle('on', b.dataset.pen === _markPen));
+
   el.querySelectorAll('.c').forEach(c => c.addEventListener('click', () => {
-    S.idx = parseInt(c.dataset.go); renderQuestion(); saveSnapshot();
-    $('sheetCard').classList.add('hide'); $('sheetArr').textContent = '▾'; $('sheetToggle').classList.remove('open');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const i = parseInt(c.dataset.go, 10);
+    const q = S.pool[i];
+    if (!q) return;
+    if (_markPen === 'jump') {               // 跳题：沿用原来的行为（跳过去 + 收起答题卡）
+      S.idx = i; renderQuestion(); saveSnapshot();
+      closeSheet();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    const id = q.id;
+    if (_markPen === '0') setMark(id, 0);
+    else {
+      const want = parseInt(_markPen, 10);
+      setMark(id, markOf(id) === want ? 0 : want);
+    }
+    renderSheet();                            // 就地重画，不跳题、不收起，方便连着标好几题
   }));
+}
+function closeSheet() {
+  const c = $('sheetCard'); if (c) c.classList.add('hide');
+  const a = $('sheetArr'); if (a) a.textContent = '▾';
+  const t = $('sheetToggle'); if (t) t.classList.remove('open');
 }
 
 // ---------- navigation ----------
@@ -729,7 +1010,10 @@ function finishExam(auto) {
 
 function showResult(scoreNum, right, wrong, total, title, isExam) {
   S.finished = true;
-  clearProgress();
+  // 交卷即停表：定格最终用时，并把练习页那个每秒刷新的小时钟收掉
+  pauseElapsed(); S.lastUsedMs = S.elapsedMs; stopElapsedTicker();
+  // 只清**当前模式**的进度：练完顺序练习不该把组卷模拟/错题练习的进度一起清掉
+  clearProgress(S.mode);
   stopTimer();
   for (let i = 0; i < S.pool.length; i++) { if (!isCorrect(S.pool[i], i)) addId(LS.wrong, S.pool[i].id); }
   $('practice').classList.add('hide');
@@ -741,6 +1025,8 @@ function showResult(scoreNum, right, wrong, total, title, isExam) {
   $('stTotal').textContent = total;
   $('stRight').textContent = right;
   $('stWrong').textContent = wrong;
+  const stT = $('stTime');
+  if (stT) stT.textContent = humanDuration(S.lastUsedMs);
   const wl = $('wrongList'); wl.innerHTML = '';
   for (let i = 0; i < S.pool.length; i++) {
     if (!isCorrect(S.pool[i], i)) {
@@ -793,7 +1079,11 @@ function openLib(kind) {
   const pool = QUESTIONS.filter(q => idset.has(q.id));
   $('libTitle').textContent = (kind === 'wrong' ? '错题集' : '收藏') + ' · 共 ' + pool.length + ' 题';
   const order = [['single', '单选题'], ['multiple', '多选题'], ['judge', '判断题'], ['case', '案例题']];
-  let h = '';
+  // 该模式若有未完成的进度，在列表最上方提示（点其中某题 = 从那一题重开这个模式的练习）
+  const info = resumeInfo(kind);
+  let h = info
+    ? '<div class="lib-resume">上次练到第 <b>' + info.at + '</b> / ' + info.total + ' 题 · 已答 ' + info.answered + ' 题</div>'
+    : '';
   order.forEach(([t, name]) => {
     const list = [];
     pool.forEach((q, i) => { if ((q.isCase ? 'case' : q.type) === t) list.push(i); });
@@ -823,6 +1113,9 @@ function bindHome() {
     $('examCfg').classList.toggle('hide', !exam);
     if (exam) { renderExamCfg(true); $('examCfgBody').classList.add('hide'); $('examCfgArr').textContent = '▸'; }
     saveSettings();
+    // 主按钮与卡片进度都要跟着换：每个模式各有一份进度，「继续练习」指向的是当前模式那一份
+    refreshStartActions();
+    renderModeResumes();
   }));
   $('examCfgHead').addEventListener('click', () => {
     const b = $('examCfgBody'); b.classList.toggle('hide');
@@ -845,14 +1138,15 @@ function bindHome() {
   $('favLibBtn').addEventListener('click', () => openLib('fav'));
   $('libClose').addEventListener('click', closeLib);
   $('libMask').addEventListener('click', closeLib);
-  // 继续练习：用完整快照恢复（题序 / 已作答 / 对错揭示 / 考试剩余时间都在快照里）
+  // 继续练习：恢复**当前模式**那一份快照（题序 / 已作答 / 对错揭示 / 考试剩余时间都在里面）。
+  // 各模式各有自己的进度，所以这里必须带上 S.mode 去取，不能取"最近一份"。
   $('continueBtn').addEventListener('click', () => {
-    const p = loadProgress();
+    const p = loadProgress(S.mode);
     if (p && Array.isArray(p.ids) && p.ids.length) start(p);
-    else { clearProgress(); start(); }
+    else { clearProgress(S.mode); start(); }
   });
-  // 从头开始：丢掉旧进度，按当前设置重新组题
-  $('restartBtn').addEventListener('click', () => { clearProgress(); start(); });
+  // 从头开始：丢掉**当前模式**的旧进度，按当前设置重新组题（其它模式的进度保留）
+  $('restartBtn').addEventListener('click', () => { clearProgress(S.mode); start(); });
   // ---- 组卷设置：题型行是动态生成的，用事件委托绑定 ----
   // 输入中：只更新汇总（不 clamp、不重建 DOM），避免打断打字
   $('ecRows').addEventListener('input', e => {
@@ -893,11 +1187,29 @@ function bindHome() {
     saveBankExamCfg(); saveSettings(); renderExamCfg(true);
   });
   $('ecDefault').addEventListener('click', () => {
-    // 「恢复默认」表达的是"标准 100 分整卷"的意图，不收敛到可用量；
-    // 题库不够时由黄色提醒说明实际会抽多少、满分是多少
-    EXAM_TYPES.forEach(t => { S.examCounts[t] = EXAM_DEFAULT_COUNTS[t]; });
+    // 「恢复默认（100 分）」= 标准 100 分整卷：目标总分回到 100，题量按标准配置的比例
+    // 自动配平（题库里没有的题型，份额让给其它题型）；
+    // 题库题量不够时由汇总行与黄色提醒如实说明实际会抽多少、本卷最多多少分
+    S.examTotal = EXAM_DEFAULT_TOTAL;
     S.examMin = 90;
     $('examMin').value = S.examMin;
+    applyDefaultPlan();
+    saveBankExamCfg(); saveSettings(); renderExamCfg(true);
+  });
+  // 「试卷总分」：改目标分 → 立即按当前各题型的分值占比重配题量（改完就是一套配平的卷子）
+  $('ecTotal').addEventListener('change', e => {
+    const v = clampTotal(e.target.value);
+    e.target.value = v;
+    // 值没变就什么都不做：浏览器会在失焦/重建时补发 change，
+    // 早期实现里这种"重复事件"会把刚切换题库算好的配置又按旧值覆盖一遍。
+    if (v === S.examTotal) return;
+    S.examTotal = v;
+    fitToTotal(v);
+    saveBankExamCfg(); saveSettings(); renderExamCfg(true);
+  });
+  // 题量被手动改乱了、想重新按目标分凑齐时点这个（幂等：重复点结果一样）
+  $('ecFit').addEventListener('click', () => {
+    fitToTotal(S.examTotal);
     saveBankExamCfg(); saveSettings(); renderExamCfg(true);
   });
   $('examMin').addEventListener('change', e => {
@@ -916,9 +1228,11 @@ function bindPractice() {
   $('checkBtn').addEventListener('click', checkCurrent);
   $('quitBtn').addEventListener('click', () => {
     if (confirm('确定退出当前练习？进度已保存，可稍后继续。')) {
-      saveSnapshot(); stopTimer();
+      pauseElapsed();          // 先停表再存快照 —— 这样快照里的用时才是"真正做题的时间"，不含退出后的空档
+      saveSnapshot(); stopTimer(); stopElapsedTicker();
       $('practice').classList.add('hide'); $('home').classList.remove('hide');
       refreshStartActions();
+      renderModeResumes();
       updateLibStats();
     }
   });
@@ -927,12 +1241,29 @@ function bindPractice() {
     const open = !c.classList.contains('hide');
     $('sheetToggle').classList.toggle('open', open);
     $('sheetArr').textContent = open ? '▴' : '▾';
+    if (open) renderSheet();
+  });
+  // 标记笔：选「跳转」时点题号跳题；选某支笔/擦除时点题号只改标记
+  document.querySelectorAll('#sheetPens .pen').forEach(b => b.addEventListener('click', () => {
+    _markPen = b.dataset.pen;
+    document.querySelectorAll('#sheetPens .pen').forEach(x => x.classList.toggle('on', x === b));
+    const hint = $('sheetHint'); if (hint) hint.textContent = sheetHintText();
+  }));
+  $('sheetClearMarks').addEventListener('click', () => {
+    if (!markCount()) return;
+    if (!confirm('清空本题库的全部标记？（错题与练习进度不受影响）')) return;
+    clearMarks(); renderSheet();
   });
 }
 function bindResult() {
-  // 练习完成后进度已被清掉（showResult → clearProgress），返回首页应恢复成单个「开始练习」
-  $('againBtn').addEventListener('click', () => { $('result').classList.add('hide'); $('home').classList.remove('hide'); updateLibStats(); refreshStartActions(); });
-  $('quitBtn2').addEventListener('click', () => { $('result').classList.add('hide'); $('home').classList.remove('hide'); updateLibStats(); refreshStartActions(); });
+  // 练习完成后只有**当前模式**的进度被清掉（showResult → clearProgress(S.mode)），
+  // 其它模式若有未完成的进度，回首页仍会显示「继续练习」
+  const backHome = () => {
+    $('result').classList.add('hide'); $('home').classList.remove('hide');
+    updateLibStats(); refreshStartActions(); renderModeResumes();
+  };
+  $('againBtn').addEventListener('click', backHome);
+  $('quitBtn2').addEventListener('click', backHome);
   $('reviewWrong').addEventListener('click', () => { $('wrongWrap').classList.toggle('hide'); });
 }
 
@@ -947,9 +1278,12 @@ function applyUIFromState() {
   if (S.mode === 'exam') { $('examCfgBody').classList.add('hide'); $('examCfgArr').textContent = '▸'; }
   updateFilterStat();
 }
-/** 有未完成的练习进度时返回摘要，否则 null */
-function resumeInfo() {
-  const p = loadProgress();
+/**
+ * 指定模式有未完成的练习进度时返回摘要，否则 null。
+ * mode 省略时看当前选中的模式（每种模式各有一份进度，所以必须指定模式）。
+ */
+function resumeInfo(mode) {
+  const p = loadProgress(mode || S.mode);
   if (!p || p.finished) return null;
   const total = Array.isArray(p.ids) ? p.ids.length : 0;
   if (!total) return null;
@@ -979,8 +1313,7 @@ function refreshStartActions() {
     $('restartBtn').classList.remove('hide');
     $('continueBtn').classList.remove('hide');
     act.classList.add('with-resume');
-    const modeName = info.mode === 'exam' ? '模拟考试'
-      : (info.mode === 'wrong' ? '错题练习' : (info.mode === 'fav' ? '收藏练习' : '顺序练习'));
+    const modeName = MODE_NAME_SHORT[info.mode] || MODE_NAME_SHORT.sequential;
     hint.textContent = '上次练到第 ' + info.at + ' / ' + info.total + ' 题，已答 ' + info.answered + ' 题（' + modeName + '）';
     hint.classList.remove('hide');
   } else {
@@ -993,26 +1326,63 @@ function refreshStartActions() {
   }
 }
 
+/**
+ * 首页四张模式卡片各显示自己的进度（如「上次到第 12 / 60 题 · 已答 8」）。
+ * 这是「每种模式的进度都记住了」的可见凭据 —— 用户不必逐个点进去找进度在哪。
+ */
+function renderModeResumes() {
+  MODES.forEach(m => {
+    const el = document.querySelector('.mode[data-mode="' + m + '"] .rs');
+    if (!el) return;
+    const info = resumeInfo(m);
+    if (!info) { el.textContent = ''; el.classList.add('hide'); return; }
+    el.innerHTML = '上次到第 <b>' + info.at + '</b> / ' + info.total + ' 题 · 已答 ' + info.answered + ' 题';
+    el.classList.remove('hide');
+  });
+}
+
 // 切换题库后刷新首页统计（不重复绑定事件）
 export function refreshHomeUI() {
   updateFilterStat();
   updateLibStats();
   refreshStartActions();
+  renderModeResumes();
   applyUIFromState();
+}
+
+// 切后台 / 关标签页时结算一次用时：不然"关页面前正在做的那道题"的时间会整段丢掉。
+// 注意这里是 markElapsed（结算后继续跑）而不是 pauseElapsed —— 回到前台要接着累计。
+// 只在练习页可见且未完成时动手，首页/结果页不碰。
+function bindTimeHooks() {
+  const settle = () => {
+    if (!S.pool || !S.pool.length || S.finished) return;
+    const p = $('practice');
+    if (!p || p.classList.contains('hide')) return;
+    markElapsed(); saveSnapshot();
+  };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) settle(); });
+  window.addEventListener('pagehide', settle);
 }
 
 let _inited = false;
 export function initEngine() {
   loadSettings();
-  if (['sequential', 'exam'].indexOf(S.mode) < 0) S.mode = 'sequential';
+  // 四种模式都保留上次的选择：每种模式各有自己的进度，强行回退到顺序练习会让用户找不到刚练的那条
+  if (MODES.indexOf(S.mode) < 0) S.mode = 'sequential';
   applyUIFromState();
   refreshStartActions();
+  renderModeResumes();
   updateLibStats();
-  if (!_inited) { bindHome(); bindPractice(); bindResult(); _inited = true; }
+  if (!_inited) { bindHome(); bindPractice(); bindResult(); bindTimeHooks(); _inited = true; }
 }
 
 // 本地开发调试钩子（供 scripts/check_resume.mjs 端到端验收使用）。
 // import.meta.env.DEV 在 vite build 时被替换为 false，整块会被打包器剔除，不会进生产包。
 if (import.meta.env.DEV) {
-  window.__exam = { setQuestions, initEngine, refreshHomeUI, start, snapshotProgress, setBankKey, renderExamCfg, examPlan, examFullScore, S };
+  window.__exam = {
+    setQuestions, initEngine, refreshHomeUI, start, snapshotProgress, setBankKey, renderExamCfg,
+    examPlan, examFullScore, fitToTotal, availByType, S,
+    renderSheet, markOf, setMark, markCount, clearMarks,
+    usedMs, clockText, humanDuration
+  };
 }

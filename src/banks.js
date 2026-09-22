@@ -121,15 +121,34 @@ function visTag(b) {
   return '<span class="vis-tag vis-public">全员可见</span>';
 }
 
+/**
+ * 权限口径（唯一入口，界面与各操作都用它判断）：
+ *   上传者本人 或 管理员 → 可改名 / 导出 / 删除（可见范围仅管理员）
+ *   其他人               → **只能练习**，既不删除也不修改
+ */
+function canManage(b) {
+  if (!b) return false;
+  if (isAdmin()) return true;
+  return !!b.mine;
+}
+
+/** 越权提示：正常情况按钮不会出现，这是纵深防御的第二道闸（DOM 被改写 / 代码被调用也拦得住） */
+function denyManage(b) {
+  alert('无权限：只有题库上传者本人或管理员才能修改 / 删除该题库。\n\n'
+    + '「' + ((b && b.name) || '该题库') + '」是 ' + ((b && b.ownerName) || '其他用户')
+    + ' 上传的，你只能练习。');
+}
+
 function bankRow(b) {
   const adm = isAdmin();
-  const canEdit = b.mine || adm;
+  const own = canManage(b);
   const acts = [];
   acts.push('<button class="btn btn-primary btn-sm act-open" type="button">练习</button>');
-  if (canEdit) acts.push('<button class="btn btn-ghost btn-sm act-rename" type="button">重命名</button>');
-  acts.push('<button class="btn btn-ghost btn-sm act-export" type="button">导出</button>');
+  // 他人的题库：非管理员只给「练习」——不出现重命名 / 导出 / 删除 / 可见范围
+  if (own) acts.push('<button class="btn btn-ghost btn-sm act-rename" type="button">重命名</button>');
+  if (own) acts.push('<button class="btn btn-ghost btn-sm act-export" type="button">导出</button>');
   if (adm) acts.push('<button class="btn btn-ghost btn-sm act-scope" type="button">可见范围</button>');
-  if (canEdit) acts.push('<button class="btn btn-ghost btn-sm act-del" type="button">删除</button>');
+  if (own) acts.push('<button class="btn btn-ghost btn-sm act-del" type="button">删除</button>');
 
   const meta = [b.count + ' 题', '案例 ' + b.caseCount + ' 组',
     '上传者：' + esc(b.ownerName || '未知') + (b.mine ? '（我）' : '')].join(' · ');
@@ -158,7 +177,8 @@ export async function renderBanks() {
   let html = '';
   if (mine.length) html += '<div class="list-head">我上传的（' + mine.length + '）</div>' + mine.map(bankRow).join('');
   if (shared.length) {
-    html += '<div class="list-head">其他人上传的（' + shared.length + '）</div>' + shared.map(bankRow).join('');
+    const tip = isAdmin() ? '' : '<span class="muted"> · 只能练习</span>';
+    html += '<div class="list-head">其他人上传的（' + shared.length + '）' + tip + '</div>' + shared.map(bankRow).join('');
   }
   box.innerHTML = html;
 
@@ -189,6 +209,7 @@ export async function openBankById(id) {
 }
 
 async function renameBank(b) {
+  if (!canManage(b)) { denyManage(b); return; }        // 第二道闸
   const name = prompt('修改题库名称', b.name);
   if (!name || !name.trim()) return;
   const { error } = await supabase.from('exam_banks').update({ name: name.trim() }).eq('id', b.id);
@@ -197,6 +218,7 @@ async function renameBank(b) {
 }
 
 async function deleteBank(b) {
+  if (!canManage(b)) { denyManage(b); return; }        // 第二道闸
   const extra = b.mine ? '' : '\n注意：这是其他用户上传的题库。';
   if (!confirm(`确定删除题库「${b.name}」？${extra}\n该题库下的错题/收藏/进度也会一并删除，且不可恢复。`)) return;
   const { error } = await supabase.from('exam_banks').delete().eq('id', b.id);
@@ -205,6 +227,7 @@ async function deleteBank(b) {
 }
 
 async function exportBank(b) {
+  if (!canManage(b)) { denyManage(b); return; }        // 第二道闸
   const { data, error } = await supabase.from('exam_banks').select('questions').eq('id', b.id).single();
   if (error) { alert('导出失败：' + error.message); return; }
   const wb = buildBankWorkbook(data.questions || []);
@@ -251,6 +274,7 @@ function onChipClick(e, kind) {
 }
 
 function openScope(b) {
+  if (!isAdmin()) { alert('无权限：「可见范围」只有管理员可以调整。'); return; }   // 第二道闸
   scopeBank = b;
   scopeDepts = b.allowDepts.slice();
   scopeRoles = b.allowRoles.slice();
@@ -315,6 +339,7 @@ function renderScopeChips() {
 
 async function saveScope() {
   if (!scopeBank) return;
+  if (!isAdmin()) { closeScope(); alert('无权限：「可见范围」只有管理员可以调整。'); return; }
   const vis = currentVis();
   if (vis === 'scope' && !scopeDepts.length && !scopeRoles.length) {
     scopeMsg('请至少选择一个部门或角色，否则没有人能看到这个题库。', true);
@@ -346,4 +371,9 @@ function scopeMsg(t, bad) {
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 验收脚本用：把权限口径暴露出来，Playwright 可直接断言（与 window.__exam 同一套做法）
+if (typeof window !== 'undefined') {
+  window.__banks = { renderBanks, canManage };
 }

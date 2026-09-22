@@ -1,8 +1,23 @@
 // 端到端验证：注册→登录→带自定义 JWT 读写 Supabase（验证 RLS 的 auth.uid() 是否真的生效）
-// 只创建 1 个诊断账号、1 条临时题库记录；临时题库记录在本脚本内会自行删除。
+//
+// ⚠️ 本脚本会往【线上正式库】注册一个账号（USER 常量）并且**不会**删掉它。
+//    上一轮跑留下的 diag_check_2026 因为注册得比正式账号早，被 admin.sql 的
+//    「首个管理员」引导逻辑自动升成了管理员，而它的密码就明文写在下面 —— 等于管理员
+//    权限外泄（管理员可改任意题库的可见范围 / 重命名 / 删库）。
+//    因此：
+//      1) 必须显式加参数才会执行，避免顺手一跑又留一个账号
+//      2) 跑完立刻执行 supabase/cleanup-test-accounts.sql 清掉
+//      3) 以后联调把 USER 改成一眼看出是临时的名字，别用固定名反复跑
 const base = 'https://www.chyunfan.cn/credit-exam-cloud';
 const USER = 'diag_check_2026';
 const PASS = 'diag123456';
+
+if (!process.argv.includes('--i-know-it-hits-production')) {
+  console.log('默认不执行：本脚本会在线上正式库注册账号「' + USER + '」且不会自动删除。');
+  console.log('确认要跑，请加参数： --i-know-it-hits-production');
+  console.log('跑完记得执行 supabase/cleanup-test-accounts.sql 清理。');
+  process.exit(0);
+}
 
 const j = (r) => r.json().catch(() => ({}));
 
@@ -68,4 +83,8 @@ const j = (r) => r.json().catch(() => ({}));
   // 6) 再读一次确认已清空
   r = await fetch(`${url}/rest/v1/exam_banks?select=id&name=eq.__diag__`, { headers: authHeaders });
   console.log('6) after cleanup ->', r.status, JSON.stringify(await j(r)));
+
+  console.log('\n⚠️ 账号「' + USER + '」仍留在线上库里（本脚本不负责删账号）。');
+  console.log('   联调结束请到 Supabase → SQL Editor 执行 supabase/cleanup-test-accounts.sql');
+  console.log('   的段 2 → 段 3，把它删掉；否则它有可能被管理员的引导逻辑或人工误升为管理员。');
 })();

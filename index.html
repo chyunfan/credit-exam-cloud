@@ -99,21 +99,25 @@
             <div class="mode active" data-mode="sequential">
               <div class="ic">📚</div><div class="t">顺序练习</div>
               <div class="d">按题库顺序逐题作答，可随时看答案、查进度</div>
+              <div class="rs hide"></div>
             </div>
             <div class="mode" data-mode="exam">
               <div class="ic">📝</div><div class="t">组卷模拟考试</div>
               <div class="d">按本库题型自选题量，随机组卷、限时答题，交卷出成绩</div>
               <div class="counts" id="examCounts"></div>
+              <div class="rs hide"></div>
             </div>
             <div class="mode" data-mode="wrong">
               <div class="ic">📕</div><div class="t">错题练习</div>
               <div class="d">仅练习错题集中的题目（忽略“去除”类开关）</div>
               <div class="counts" id="wrongCounts"></div>
+              <div class="rs hide"></div>
             </div>
             <div class="mode" data-mode="fav">
               <div class="ic">⭐</div><div class="t">收藏练习</div>
               <div class="d">仅练习你收藏的题目</div>
               <div class="counts" id="favCounts"></div>
+              <div class="rs hide"></div>
             </div>
           </div>
         </div>
@@ -175,12 +179,23 @@
 
         <div class="section" id="examCfg">
           <div class="collapsible-head" id="examCfgHead">
-            <h2>组卷设置（自选题量 · 实时满分）</h2>
+            <h2>组卷设置（总分可改 · 自选题量 · 实时满分）</h2>
             <span class="arr" id="examCfgArr">▸</span>
           </div>
           <div id="examCfgBody" class="collapsible-body hide">
             <!-- 题型行按「当前题库实际有的题型」动态生成，不再写死四行 -->
             <div class="ec-note" id="ecAvail">正在读取题库题型…</div>
+            <!-- 试卷总分：先定总分，题量按它自动配；也可以直接微调下面的各题型题量 -->
+            <div class="opt-row ec-row ec-total">
+              <div class="ec-info">
+                <div class="lbl">试卷总分 <span class="muted">默认 100 分 · 可修改</span></div>
+                <div class="hint">改总分即按各题型分值占比自动配题；题库里没有的题型不参与组卷</div>
+              </div>
+              <div class="num-row">
+                <input type="number" class="ec ec-total-in" id="ecTotal" min="1" max="999" step="5" value="100" inputmode="numeric">
+                <button type="button" class="ec-mini ec-fit" id="ecFit">按总分配题</button>
+              </div>
+            </div>
             <div id="ecRows"></div>
             <div class="ec-actions">
               <button type="button" class="btn btn-ghost btn-sm" id="ecMaxAll">各题型取最多</button>
@@ -208,12 +223,36 @@
         <div class="pbar"><i id="pbarFill"></i></div>
         <div class="pinfo">
           <span id="pcount">第 0 / 0 题</span>
-          <span id="modeTag" class="muted"></span>
-          <span id="timerSpan" class="timer hide"></span>
+          <span class="pinfo-r">
+            <span id="modeTag" class="muted"></span>
+            <span id="elapsedSpan" class="elapsed hide"></span>
+            <span id="timerSpan" class="timer hide"></span>
+          </span>
         </div>
         <div id="sheetCard" class="card hide" style="margin-top:12px">
-          <h2 style="font-size:14px;color:var(--sub);margin-bottom:10px">答题卡（点击题号可跳转）</h2>
-          <div class="sheet" id="sheet"></div>
+          <div class="sh-head">
+            <h2>答题卡</h2>
+            <span class="sh-stat" id="sheetStat"></span>
+          </div>
+          <!-- 标记笔：先选工具，再点题号。「跳转」= 原来的行为，其余都是改标记颜色 -->
+          <div class="sh-pens" id="sheetPens">
+            <button type="button" class="pen on" data-pen="jump">跳转</button>
+            <button type="button" class="pen" data-pen="1"><i class="dot"></i>存疑</button>
+            <button type="button" class="pen" data-pen="2"><i class="dot"></i>重点</button>
+            <button type="button" class="pen" data-pen="3"><i class="dot"></i>待查</button>
+            <button type="button" class="pen" data-pen="0">擦除</button>
+          </div>
+          <div class="sh-hint" id="sheetHint"></div>
+          <div class="sh-legend">
+            <span><i class="c"></i>未答</span>
+            <span><i class="c ans"></i>已答</span>
+            <span><i class="c right"></i>答对</span>
+            <span><i class="c wrong"></i>答错</span>
+            <span><i class="c cur"></i>当前</span>
+            <span><i class="c flag"></i>标记</span>
+            <button type="button" class="sh-clear hide" id="sheetClearMarks">清空标记</button>
+          </div>
+          <div id="sheet"></div>
         </div>
         <div id="qBody"></div>
         <div class="nav">
@@ -236,6 +275,7 @@
           <div class="stat"><div class="n" id="stTotal">0</div><div class="l">总题数</div></div>
           <div class="stat"><div class="n" style="color:var(--ok)" id="stRight">0</div><div class="l">答对</div></div>
           <div class="stat"><div class="n" style="color:var(--bad)" id="stWrong">0</div><div class="l">答错</div></div>
+          <div class="stat"><div class="n dur" id="stTime">0秒</div><div class="l">做题用时</div></div>
         </div>
         <div style="display:flex;gap:10px">
           <button class="btn btn-ghost" id="reviewWrong" style="flex:1">查看错题</button>

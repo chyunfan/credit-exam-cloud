@@ -210,7 +210,7 @@ const rowScope = rows.find(r => r.id === 'b-scope');
 chk(rowMine && /上传者：常云凡（我）/.test(rowMine.meta), 'A2 自己的库标注「上传者：常云凡（我）」', rowMine && rowMine.meta);
 chk(rowOther && /上传者：张三/.test(rowOther.meta), 'A2 他人库标注「上传者：张三」', rowOther && rowOther.meta);
 chk(rowMine.acts.join() === '练习,重命名,导出,删除', 'A4 自己的库：练习/重命名/导出/删除，无「可见范围」', rowMine.acts.join());
-chk(rowOther.acts.join() === '练习,导出', 'A3 他人的库：只有练习/导出（不能改名/删除）', rowOther.acts.join());
+chk(rowOther.acts.join() === '练习', 'A3 他人的库：只有「练习」（不可改名/导出/删除）', rowOther.acts.join());
 chk(/全员可见/.test(rowOther.name), 'A5 「全员可见」徽标', rowOther.name);
 chk(/限定：部门 信贷部 · 角色 客户经理/.test(rowScope.name), 'A5 「按部门·角色」徽标带明细', rowScope.name);
 
