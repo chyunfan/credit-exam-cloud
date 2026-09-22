@@ -101,6 +101,7 @@ const snap = () => page.evaluate(() => {
     lockOpts: o ? o.querySelectorAll('.opt.lock').length : 0,
     selIdxs: o ? [...o.querySelectorAll('.opt')].map((e, i) => e.classList.contains('sel') ? i : -1).filter(i => i >= 0) : [],
     fbShown: !!line,
+    lockIcon: !!lk,
     lockTag: lk ? lk.textContent.trim() : '',
     nextBtn: document.getElementById('nextBtn').textContent.trim()
   };
@@ -126,7 +127,8 @@ await page.waitForTimeout(200);
 let s = await snap();
 chk(s.fbShown && s.locked, 'A1 单选作答后回显答案，整组选项转为锁定', JSON.stringify(s));
 chk(s.lockOpts === 3, 'A1 单选 3 个选项都带锁定标记', 'locked=' + s.lockOpts);
-chk(/锁/.test(s.lockTag), 'A1 反馈行给出「已锁定」提示', s.lockTag);
+chk(s.lockIcon, 'A1 反馈行右侧给出锁定标识', JSON.stringify({ icon: s.lockIcon }));
+chk(!/已锁定/.test(s.lockTag), 'A1 锁定标识只留图标，不再显示「已锁定」字样', JSON.stringify(s.lockTag));
 const afterA1 = s.ans;
 await page.click('#opts .opt[data-i="1"]');           // 试图改成正确答案
 await page.click('#opts .opt[data-i="2"]');
@@ -142,7 +144,7 @@ await page.waitForTimeout(250);
 await page.click('#opts .opt[data-i="0"]');           // 选「正确」（答案其实是「错误」）
 await page.waitForTimeout(200);
 s = await snap();
-chk(s.locked && s.lockOpts === 2 && /锁/.test(s.lockTag), 'A2 判断题作答后同样锁定（2 个按钮）', JSON.stringify({ locked: s.locked, n: s.lockOpts, tag: s.lockTag }));
+chk(s.locked && s.lockOpts === 2 && s.lockIcon, 'A2 判断题作答后同样锁定（2 个按钮）', JSON.stringify({ locked: s.locked, n: s.lockOpts, icon: s.lockIcon }));
 const afterA2 = s.ans;
 await page.click('#opts .opt[data-i="1"]');
 await page.waitForTimeout(200);
@@ -208,7 +210,7 @@ await page.click('#opts .opt[data-i="0"]');
 await page.waitForTimeout(200);
 s = await snap();
 chk(s.fbShown && !s.locked, 'C1 开着「看答案」时答案常显，但不判定为提交 → 不锁', JSON.stringify({ fb: s.fbShown, locked: s.locked }));
-chk(!s.lockTag, 'C1 此时不显示「已锁定」标签', s.lockTag);
+chk(!s.lockIcon, 'C1 此时不显示锁定标识', 'icon=' + s.lockIcon);
 await page.click('#opts .opt[data-i="1"]');
 await page.waitForTimeout(150);
 s = await snap();
@@ -234,6 +236,7 @@ for (const w of [375, 320]) {
       lineH: Math.round(box.height),
       tagInside: tb.right <= box.right + 1 && tb.left >= box.left - 1,
       tagText: tag.textContent.trim(),
+      tagW: Math.round(tb.width),
       locked: !!document.querySelector('#opts.lock')
     };
   });
@@ -242,7 +245,8 @@ for (const w of [375, 320]) {
 }
 for (const m of mobile) {
   chk(m.scrollW <= m.w, `D1 ${m.w}px 宽：无横向溢出`, m.scrollW + ' > ' + m.w);
-  chk(m.tagInside, `D1 ${m.w}px 宽：「已锁定」标签没有跑出反馈行`, JSON.stringify({ tag: m.tagText, inside: m.tagInside }));
+  chk(m.tagInside, `D1 ${m.w}px 宽：锁定标识没有跑出反馈行`, JSON.stringify({ tag: m.tagText, inside: m.tagInside }));
+  chk(!/已锁定/.test(m.tagText), `D1 ${m.w}px 宽：锁定标识不含「已锁定」文字（宽度 ${m.tagW}px）`, JSON.stringify(m.tagText));
   chk(m.lineH <= 52, `D1 ${m.w}px 宽：反馈行仍然只占一行（≤52px）`, m.lineH + 'px');
   chk(m.locked, `D1 ${m.w}px 宽：锁定态照常生效`, '');
 }
@@ -254,7 +258,24 @@ chk(/function isLocked\(/.test(eng), 'E1 engine.js 里有 isLocked() 判定', ''
 chk(/function onPick[\s\S]{0,200}isLocked\(q, S\.idx\)/.test(eng), 'E2 onPick 的入口就拦掉了锁定后的点击（不是只靠 UI 样式）', '');
 chk(/\.opt\.lock\{/.test(css), 'E3 styles.css 有 .opt.lock 规则', '');
 chk(/\.fb-lock\{/.test(css), 'E3 styles.css 有 .fb-lock 规则', '');
+// 本轮需求：反馈行右侧不再出现「已锁定」**可见文字**，只留一个图标兜底（带 title 说明）
+// 注：aria-label 里的「已锁定」是给读屏用的，不算可见文字，不影响本断言
+chk(/>🔒<\/span>/.test(eng), 'E3 engine.js 的锁定标识只含图标、无可见文字', (eng.match(/fb-lock[^<]*>[^<]*/) || [''])[0]);
+chk(!/class="fb-lock"[^>]*>\s*[^<]*已锁定/.test(eng), 'E3 锁定标识不再渲染「已锁定」字样', '');
+chk(/class="fb-lock" title=/.test(eng), 'E3 锁定标识带 title 说明（鼠标悬停可见）+ aria-label（读屏可读）', '');
 chk(jsErrors.length === 0, 'E4 全程无 JS 报错', jsErrors.join(' | '));
+
+/* ============ F 交付产物核对（真正上传的那个单文件） ============ */
+const distPath = path.join(ROOT, 'dist/index.html');
+if (fs.existsSync(distPath)) {
+  const dist = fs.readFileSync(distPath, 'utf8');
+  chk(/>🔒<\/span>/.test(dist), 'F1 单文件产物内含新的锁定标识（纯图标）', '');
+  const hits = dist.match(/.{0,34}已锁定.{0,12}/g) || [];
+  chk(hits.length > 0, 'F2 产物里能找到锁定标识代码（说明产物是最新的）', 'hits=' + hits.length);
+  chk(hits.every(h => /aria-label="已锁定"/.test(h)),
+    'F2 产物里「已锁定」只出现在 aria-label（不可见），没有可见文字', hits.join(' || '));
+  chk(!dist.includes('__exam'), 'F3 产物内已剔除调试钩子', '');
+}
 
 await browser.close();
 srv.kill();

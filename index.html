@@ -152,15 +152,19 @@
           </div>
           <div class="opt-row">
             <div><div class="lbl">去除多选全选题目</div><div class="hint">开启后剔除“所有选项都正确”的多选题</div></div>
-            <label class="switch"><input type="checkbox" id="rmAll" checked><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="rmAll"><span class="slider"></span></label>
           </div>
           <div class="opt-row">
             <div><div class="lbl">去除正确的判断题</div><div class="hint">开启后剔除答案为“正确”的判断题</div></div>
-            <label class="switch"><input type="checkbox" id="rmCorrectJudge" checked><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="rmCorrectJudge"><span class="slider"></span></label>
           </div>
           <div class="opt-row">
             <div><div class="lbl">选完展示正确答案</div><div class="hint">单选/判断题选完即显示；多选题在练习中点「确定」核对并显示对错</div></div>
-            <label class="switch"><input type="checkbox" id="revealAfter"><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="revealAfter" checked><span class="slider"></span></label>
+          </div>
+          <div class="opt-row">
+            <div><div class="lbl">展示解析</div><div class="hint">回显答案后在下方显示该题解析<span class="ana-stat" id="anaStat"></span></div></div>
+            <label class="switch"><input type="checkbox" id="showAnalysis" checked><span class="slider"></span></label>
           </div>
           <div class="opt-row">
             <div><div class="lbl">答对自动移出错题集</div><div class="hint">开启后某道错题再次答对即从错题集移除</div></div>

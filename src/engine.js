@@ -13,6 +13,22 @@ export function setQuestions(arr) { QUESTIONS = Array.isArray(arr) ? arr : []; }
 const EXAM_DEFAULT_COUNTS = { single: 60, multiple: 40, judge: 20, case: 5 };
 const EXAM_TYPES = ['single', 'multiple', 'judge', 'case'];
 const EXAM_DEFAULT_TOTAL = 100;        // 组卷目标总分默认值（可改）
+// ------------------------------------------------------------
+// 练习选项的「出厂默认值」——只此一处定义，三处引用：
+//   ① S 的初值；② applySettings() 遇到旧快照缺字段时的兜底；③ 账号首次进入（本机+云端都无记录）时套用。
+//   ⚠ 改这里必须同步改 index.html 里对应 input 的 checked 属性：两处必须一致，
+//     否则页面首帧会按 HTML 画出旧状态、等 JS 跑完再跳成新状态（肉眼可见的"闪一下"）。
+// ------------------------------------------------------------
+const DEFAULT_PREFS = {
+  showAns: false,          // 默认显示答案：关（先作答，再对答案）
+  rmAll: false,            // 去除多选全选题目：关
+  rmCorrectJudge: false,   // 去除正确的判断题：关
+  revealAfter: true,       // 选完展示正确答案：开（单选/判断选完即回显，多选点「确定」核对）
+  showAnalysis: true,      // 展示解析：开（回显答案后在下方显示该题解析）
+  autoRemoveWrong: true    // 答对自动移出错题集：开
+};
+/** 布尔练习选项统一兜底：字段缺失（旧版快照/旧行）→ 用出厂默认，而不是一律当 false */
+function prefBool(v, key) { return v === undefined ? DEFAULT_PREFS[key] : !!v; }
 // 四种练习模式（进度按模式各存一份，首页四张卡片也靠这张表取名字）
 const MODE_NAME = { sequential: '顺序练习', exam: '组卷模拟考试', wrong: '错题练习', fav: '收藏练习' };
 const MODE_NAME_SHORT = { sequential: '顺序练习', exam: '模拟考试', wrong: '错题练习', fav: '收藏练习' };
@@ -20,7 +36,10 @@ const MODES = ['sequential', 'exam', 'wrong', 'fav'];
 
 const S = {
   mode: 'sequential', types: { single: true, multiple: true, judge: true, case: true },
-  showAns: false, rmAll: true, rmCorrectJudge: true, revealAfter: false, autoRemoveWrong: true,
+  showAns: DEFAULT_PREFS.showAns, rmAll: DEFAULT_PREFS.rmAll,
+  rmCorrectJudge: DEFAULT_PREFS.rmCorrectJudge,
+  revealAfter: DEFAULT_PREFS.revealAfter, showAnalysis: DEFAULT_PREFS.showAnalysis,
+  autoRemoveWrong: DEFAULT_PREFS.autoRemoveWrong,
   examCounts: Object.assign({}, EXAM_DEFAULT_COUNTS),
   examPoints: { single: 0.5, multiple: 1, judge: 0.5, case: 4 },
   examTotal: EXAM_DEFAULT_TOTAL,   // 组卷目标总分：用户可以改，题量按它自动配
@@ -51,12 +70,35 @@ function $(id) { return document.getElementById(id); }
 //   ② 云端 exam_user_prefs —— 登录后按账号跟随，换手机、换浏览器也是同一套设置。
 // 冲突判定：比较 updatedAt，谁新用谁。这样"离线时改过"的设置不会被云端旧值抹掉。
 // ============================================================
-const PREFS_KEY = 'credit_exam_cfg';
+const PREFS_KEY = 'credit_exam_cfg';        // v2.16 之前的旧键：全机共用一份，已被下面按账号隔离的键取代
+// v2.16：本机缓存**按账号隔离**（credit_exam_cfg:<uid>，未登录用 :guest）。
+// 为什么必须隔离：同一台设备换了账号登录时，新账号不该继承上一个账号的设置 ——
+// 否则"第一次进入"看到的不是出厂默认，而是上一个人的选项（云端没记录时尤其明显）。
+function prefsKey() {
+  return PREFS_KEY + ':' + (getUserId() || 'guest');
+}
+/** 读本机缓存：新键为空时，尝试把老版本的全局键搬过来（只搬一次，见 migrateLegacyPrefs） */
+function readLocalPrefsRaw() {
+  try { const v = localStorage.getItem(prefsKey()); if (v !== null) return v; } catch (e) { }
+  return migrateLegacyPrefs();
+}
+/** v2.16 一次性搬迁：老版本把设置存在全局键上，登录后搬进本账号的键；未登录不搬（免得把 A 的设置塞给 guest） */
+function migrateLegacyPrefs() {
+  if (!getUserId()) return null;
+  try {
+    const old = localStorage.getItem(PREFS_KEY);
+    if (old === null) return null;
+    localStorage.setItem(prefsKey(), old);
+    localStorage.removeItem(PREFS_KEY);
+    return old;
+  } catch (e) { return null; }
+}
 
 function settingsSnapshot() {
   return {
     mode: S.mode, types: S.types, showAns: S.showAns, rmAll: S.rmAll,
-    rmCorrectJudge: S.rmCorrectJudge, revealAfter: S.revealAfter, autoRemoveWrong: S.autoRemoveWrong,
+    rmCorrectJudge: S.rmCorrectJudge, revealAfter: S.revealAfter, showAnalysis: S.showAnalysis,
+    autoRemoveWrong: S.autoRemoveWrong,
     examCounts: S.examCounts, examPoints: S.examPoints, examTotal: S.examTotal, examMin: S.examMin,
     examCfgByBank: S.examCfgByBank,
     updatedAt: Date.now()
@@ -65,9 +107,11 @@ function settingsSnapshot() {
 
 function applySettings(c) {
   S.mode = c.mode || 'sequential'; S.types = Object.assign(S.types, c.types || {});
-  S.showAns = !!c.showAns; S.rmAll = !!c.rmAll;
-  S.rmCorrectJudge = (c.rmCorrectJudge === undefined ? true : !!c.rmCorrectJudge); S.revealAfter = !!c.revealAfter;
-  S.autoRemoveWrong = (c.autoRemoveWrong === undefined ? true : !!c.autoRemoveWrong);
+  S.showAns = prefBool(c.showAns, 'showAns'); S.rmAll = prefBool(c.rmAll, 'rmAll');
+  S.rmCorrectJudge = prefBool(c.rmCorrectJudge, 'rmCorrectJudge');
+  S.revealAfter = prefBool(c.revealAfter, 'revealAfter');
+  S.showAnalysis = prefBool(c.showAnalysis, 'showAnalysis');
+  S.autoRemoveWrong = prefBool(c.autoRemoveWrong, 'autoRemoveWrong');
   if (c.examPoints) S.examPoints = Object.assign(S.examPoints, c.examPoints);
   S.examCounts = Object.assign({}, EXAM_DEFAULT_COUNTS, c.examCounts || {});
   S.examTotal = Number(c.examTotal) > 0 ? Number(c.examTotal) : EXAM_DEFAULT_TOTAL;
@@ -75,6 +119,19 @@ function applySettings(c) {
   if (c.examCfgByBank && typeof c.examCfgByBank === 'object') S.examCfgByBank = Object.assign({}, c.examCfgByBank);
   loadBankExamCfg();          // 题库级配置优先于"上次用过的配置"
 }
+
+/** 恢复出厂默认：账号**第一次进入**（本机+云端都没有记录）与**登出**时调用 */
+function applyDefaultPrefs() {
+  applySettings(Object.assign({}, DEFAULT_PREFS));
+  applyUIFromState();
+}
+
+/**
+ * 登出时调用：把内存里的练习设置收回出厂默认。
+ * 本机缓存已按账号隔离（credit_exam_cfg:<uid>），下一个账号进来读不到上一个人的键 → 看到的就是默认值；
+ * 这里再显式清一次内存，是为了覆盖"云端不可用、拿不到新账号记录"的情况（否则 S 会一直留着上一个人的设置）。
+ */
+export function resetPrefsToDefault() { applyDefaultPrefs(); }
 
 // ---------- 组卷配置：按题库各存一份 ----------
 /** 切题库时调用：把该题库上次的组卷配置带回首页 */
@@ -225,13 +282,13 @@ function showEcSaved() {
 /** 改了就存：本地立即写，云端防抖 800ms */
 function saveSettings() {
   const snap = settingsSnapshot();
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(snap)); } catch (e) { }
+  try { localStorage.setItem(prefsKey(), JSON.stringify(snap)); } catch (e) { }
   scheduleCloudSave(snap);
 }
 
 function loadSettings() {
   try {
-    const c = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+    const c = JSON.parse(readLocalPrefsRaw() || 'null');
     if (c) applySettings(c);
   } catch (e) { }
 }
@@ -263,7 +320,10 @@ async function pushPrefs(snap) {
   }
 }
 
-/** 登录进入题库后调用：把本地与云端设置对齐（谁新用谁） */
+/**
+ * 登录进入题库后调用：把「本机该账号的缓存」与「云端该账号的记录」对齐（谁新用谁）。
+ * 两个都空 = 这个账号**第一次进入** → 套出厂默认（DEFAULT_PREFS）。
+ */
 export async function syncPrefsFromCloud() {
   const uid = getUserId();
   if (!uid) return;
@@ -273,25 +333,32 @@ export async function syncPrefsFromCloud() {
     if (error) throw error;
     cloud = (data && data.prefs) || null;
   } catch (e) {
-    // 拉不到（离线/表未建）→ 保持本地现状，并如实告诉用户"只存本机"
+    // 拉不到（离线 / exam_user_prefs 表还没建）→ 用本机**这个账号**的缓存兜底，没有才是出厂默认，
+    // 并如实告诉用户"只存本机"。注意不能直接 return：换账号时内存里可能还留着上一个账号的设置。
+    let local2 = null;
+    try { local2 = JSON.parse(readLocalPrefsRaw() || 'null'); } catch (err) { }
+    if (local2) { applySettings(local2); applyUIFromState(); }
+    else applyDefaultPrefs();
     setPrefsHint('改完自动记住（仅本机）', false);
     return;
   }
   let local = null;
-  try { local = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null'); } catch (e) { }
+  try { local = JSON.parse(readLocalPrefsRaw() || 'null'); } catch (e) { }
 
   const cloudAt = (cloud && cloud.updatedAt) || 0;
   const localAt = (local && local.updatedAt) || 0;
 
   if (cloud && cloudAt >= localAt) {
     applySettings(cloud);                       // 云端较新 → 覆盖本地
-    try { localStorage.setItem(PREFS_KEY, JSON.stringify(cloud)); } catch (e) { }
+    try { localStorage.setItem(prefsKey(), JSON.stringify(cloud)); } catch (e) { }
     applyUIFromState();
     setPrefsHint('改完自动记住（跟随账号）', true);
   } else if (local && localAt > cloudAt) {
     pushPrefs(local);                           // 本地较新（如离线改过）→ 推上云
   } else {
-    setPrefsHint('改完自动记住（跟随账号）', true);   // 两端都空/一致，账号同步可用
+    // 本机与本账号云端都没有记录 = 第一次进入 → 出厂默认
+    applyDefaultPrefs();
+    setPrefsHint('改完自动记住（跟随账号）', true);
   }
 }
 
@@ -512,7 +579,24 @@ function buildPool() {
 }
 
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+/**
+ * 「展示解析」那一行的动态小字：直接把"本题库到底有没有解析"摆出来。
+ * 没这句的话，题库整本没写解析时用户会开了开关却什么都看不到，以为功能坏了。
+ */
+function updateAnaStat() {
+  const el = $('anaStat'); if (!el) return;
+  const s = analysisStat();
+  if (!s.total) { el.textContent = ''; el.classList.remove('warn'); return; }
+  if (s.has > 0) {
+    el.textContent = '本题库 ' + s.has + ' / ' + s.total + ' 题有解析';
+    el.classList.remove('warn');
+  } else {
+    el.textContent = '本题库暂无解析';
+    el.classList.add('warn');
+  }
+}
 function updateFilterStat() {
+  updateAnaStat();
   const el = $('filterStat'); if (!el) return;
   let base = 0, rmAllN = 0, rmJudgeN = 0;
   QUESTIONS.forEach(q => {
@@ -609,10 +693,10 @@ function start(p, atIdx) {
   if (resumed) {
     S.mode = p.mode || 'sequential';
     S.types = Object.assign({ single: true, multiple: true, judge: true, case: true }, p.types || {});
-    S.showAns = !!p.showAns; S.rmAll = !!p.rmAll;
-    S.rmCorrectJudge = (p.rmCorrectJudge === undefined ? true : !!p.rmCorrectJudge);
-    S.revealAfter = !!p.revealAfter;
-    S.autoRemoveWrong = (p.autoRemoveWrong === undefined ? true : !!p.autoRemoveWrong);
+    // 练习选项（默认显示答案 / 去全选 / 去正确判断题 / 选完展示答案 / 答对移出错题集）**不跟随快照恢复**：
+    // 它们是"账号级偏好"，永远以用户当前设置为准。旧快照里存着的历史值若在点「继续练习」时盖回来，
+    // 用户会看到自己刚设好的开关莫名被改（v2.16 前就有这个副作用），而且接着的 saveSettings() 还会把旧值写回云端。
+    // 题池由下面的 p.ids 原样重建，不受这几个开关影响，所以不复原也不会让题目对不上。
     applyUIFromState();
     if (Array.isArray(p.ids) && p.ids.length) {
       const idset = new Set(p.ids);
@@ -718,6 +802,27 @@ function tickElapsed() {
 function startElapsedTicker() { stopElapsedTicker(); tickElapsed(); S.etick = setInterval(tickElapsed, 1000); }
 function stopElapsedTicker() { if (S.etick) { clearInterval(S.etick); S.etick = null; } }
 
+// ---------- 「展示解析」 ----------
+/**
+ * 题末的解析块。显示规则**与参考答案完全一致**：只要答案回显了就显示（mode !== null），
+ * 没回显就一个字都不露 —— 否则解析里往往写着答案，等于把答案提前剧透。
+ * 于是四种模式、以及「看答案」「选完展示正确答案」各种组合都不需要额外判断。
+ *
+ * 两种"不出现"：① 设置关着；② 这道题本身没写解析（不占位、不留空壳）。
+ */
+function analysisHtml(q, mode) {
+  if (!S.showAnalysis || !mode) return '';
+  const txt = q && q.analysis != null ? String(q.analysis).replace(/\s+/g, ' ').trim() : '';
+  if (!txt) return '';
+  return '<div class="ana show"><div class="ana-h">解析</div><div class="ana-b">' + escapeHtml(txt) + '</div></div>';
+}
+/** 当前题库里有多少题写了解析（首页那行提示用；题库没解析时提前告知，免得用户以为开关坏了） */
+function analysisStat() {
+  let has = 0;
+  QUESTIONS.forEach(q => { if (q.analysis != null && String(q.analysis).trim()) has++; });
+  return { has: has, total: QUESTIONS.length };
+}
+
 // ---------- question render ----------
 function renderQuestion() {
   const q = S.pool[S.idx];
@@ -778,9 +883,10 @@ function renderQuestion() {
     }
     fbLine = '<div class="fb-line show">' + pill +
       '<span class="ans-key">正确答案：<b>' + escapeHtml(answerKeysStr(q)) + '</b></span>' +
-      (locked ? '<span class="fb-lock">🔒 已锁定</span>' : '') + '</div>';
+      (locked ? '<span class="fb-lock" title="本题已回显答案，不能再改选" aria-label="已锁定">🔒</span>' : '') + '</div>';
   }
   html += fbLine;
+  html += analysisHtml(q, mode);      // 解析：跟着「答案是否回显」走，没回显时一个字都不露
   $('qBody').innerHTML = html;
   const optsEl = $('opts');
   if (optsEl && !S.finished) {
@@ -1133,6 +1239,7 @@ function bindHome() {
   $('rmAll').addEventListener('change', e => { S.rmAll = e.target.checked; updateFilterStat(); renderExamCfg(); saveSettings(); });
   $('rmCorrectJudge').addEventListener('change', e => { S.rmCorrectJudge = e.target.checked; updateFilterStat(); renderExamCfg(); saveSettings(); });
   $('revealAfter').addEventListener('change', e => { S.revealAfter = e.target.checked; saveSettings(); });
+  $('showAnalysis').addEventListener('change', e => { S.showAnalysis = e.target.checked; saveSettings(); });
   $('autoRemoveWrong').addEventListener('change', e => { S.autoRemoveWrong = e.target.checked; saveSettings(); });
   $('wrongLibBtn').addEventListener('click', () => openLib('wrong'));
   $('favLibBtn').addEventListener('click', () => openLib('fav'));
@@ -1270,7 +1377,7 @@ function bindResult() {
 function applyUIFromState() {
   document.querySelectorAll('.mode').forEach(m => m.classList.toggle('active', m.dataset.mode === S.mode));
   document.querySelectorAll('#typeChips .chip').forEach(c => c.classList.toggle('active', !!S.types[c.dataset.t]));
-  $('showAns').checked = S.showAns; $('rmAll').checked = S.rmAll; $('rmCorrectJudge').checked = S.rmCorrectJudge; $('revealAfter').checked = S.revealAfter; $('autoRemoveWrong').checked = S.autoRemoveWrong;
+  $('showAns').checked = S.showAns; $('rmAll').checked = S.rmAll; $('rmCorrectJudge').checked = S.rmCorrectJudge; $('revealAfter').checked = S.revealAfter; $('showAnalysis').checked = S.showAnalysis; $('autoRemoveWrong').checked = S.autoRemoveWrong;
   $('examMin').value = S.examMin;
   renderExamCfg(true);          // 题型行按当前题库动态生成 + 同步题量输入框
   updateMaxScore();
@@ -1383,6 +1490,7 @@ if (import.meta.env.DEV) {
     setQuestions, initEngine, refreshHomeUI, start, snapshotProgress, setBankKey, renderExamCfg,
     examPlan, examFullScore, fitToTotal, availByType, S,
     renderSheet, markOf, setMark, markCount, clearMarks,
-    usedMs, clockText, humanDuration
+    usedMs, clockText, humanDuration, analysisStat,
+    defaultPrefs: DEFAULT_PREFS, prefsKey, syncPrefsFromCloud, applySettings
   };
 }

@@ -16,8 +16,9 @@ const chromium = _pw.chromium || _pw.default?.chromium;
 const EXE = 'C:/Users/cyf/AppData/Local/ms-playwright/chromium-1140/chrome-win/chrome.exe';
 const FILE = pathToFileURL(path.resolve(import.meta.dirname, '..', 'dist', 'index.html')).href;
 
-const SWITCHES = ['showAns', 'rmAll', 'rmCorrectJudge', 'revealAfter', 'autoRemoveWrong'];
-const HTML_DEFAULT = { showAns: false, rmAll: true, rmCorrectJudge: true, revealAfter: false, autoRemoveWrong: true };
+const SWITCHES = ['showAns', 'rmAll', 'rmCorrectJudge', 'revealAfter', 'showAnalysis', 'autoRemoveWrong'];
+// 出厂默认（v2.18 起）：只有「选完展示正确答案」「展示解析」「答对自动移出错题集」是开着的
+const HTML_DEFAULT = { showAns: false, rmAll: false, rmCorrectJudge: false, revealAfter: true, showAnalysis: true, autoRemoveWrong: true };
 const readSwitches = ids => Object.fromEntries(ids.map(id => [id, document.getElementById(id).checked]));
 
 const browser = await chromium.launch({ executablePath: EXE });
@@ -35,12 +36,17 @@ await page.evaluate(() => {
     el.checked = !el.checked;
     el.dispatchEvent(new Event('change', { bubbles: true }));
   };
-  ['showAns', 'rmAll', 'rmCorrectJudge', 'revealAfter'].forEach(toggle);
+  ['showAns', 'rmAll', 'rmCorrectJudge', 'revealAfter', 'showAnalysis'].forEach(toggle);
 });
 await page.waitForTimeout(300);
 
 const changed = await page.evaluate(readSwitches, SWITCHES);
-const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('credit_exam_cfg') || 'null'));
+// 本脚本跑的是 dist 单文件产物（DEV 钩子已被剔除，拿不到 __exam.prefsKey()），
+// 所以键名直接写死：v2.16 起本机缓存按账号隔离，未登录 = credit_exam_cfg:guest
+const stored = await page.evaluate(() => {
+  const key = 'credit_exam_cfg:guest';
+  return { key, snap: JSON.parse(localStorage.getItem(key) || 'null') };
+});
 
 // 2) 刷新页面 = 退出后再次打开/登录
 await page.reload();
@@ -77,7 +83,10 @@ const ok = rows.every(r => r['是否记住'] === '✅');
 const reallyRestored = SWITCHES.some(k => HTML_DEFAULT[k] !== afterReload[k]); // 确实不是"回到默认"
 
 console.log(JSON.stringify({
-  本地存储: stored ? { 有updatedAt: typeof stored.updatedAt === 'number', rmAll: stored.rmAll, revealAfter: stored.revealAfter } : '（无）',
+  本机缓存键: stored.key,
+  本地存储: stored.snap
+    ? { 有updatedAt: typeof stored.snap.updatedAt === 'number', rmAll: stored.snap.rmAll, revealAfter: stored.snap.revealAfter }
+    : '（无）',
   逐项: rows,
   结论: ok ? '✅ 退出后保持上次设置' : '❌ 有设置未保持',
   佐证非默认值: reallyRestored ? '✅ 恢复的是用户设定，不是 HTML 默认' : '⚠️ 恰好与默认相同，判据不足',

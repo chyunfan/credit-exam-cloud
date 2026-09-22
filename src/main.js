@@ -1,6 +1,6 @@
 import { initAuth, getSession, getUsername, logout } from './auth.js';
 import { initBanks, renderBanks, openBankById } from './banks.js';
-import { initEngine, refreshHomeUI, syncPrefsFromCloud, setBankKey, setQuestions } from './engine.js';
+import { initEngine, refreshHomeUI, syncPrefsFromCloud, resetPrefsToDefault, setBankKey, setQuestions } from './engine.js';
 import { loadBankState } from './store.js';
 import { initAdmin, loadMe, applyAdminEntry } from './admin.js';
 
@@ -58,6 +58,7 @@ async function refreshIdentity() {
 function doLogout() {
   logout();
   try { localStorage.removeItem('ce_current_bank'); } catch (e) {}
+  resetPrefsToDefault();   // 练习设置收回出厂默认：换账号登录时不该继承上一个人的选项
   showScreen('auth');
 }
 

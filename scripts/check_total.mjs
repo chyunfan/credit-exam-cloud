@@ -68,9 +68,9 @@ await page.evaluate(() => {
     const push = (type, extra) => arr.push(mk(++id, type, extra));
     for (let i = 0; i < 97; i++) push('single');
     for (let i = 0; i < 51; i++) push('multiple', { correctIdx: [0, 1] });
-    for (let i = 0; i < 5; i++) push('multiple', { correctIdx: [0, 1, 2], answerKeys: ['A', 'B', 'C'] });   // 全选，默认被去除
+    for (let i = 0; i < 5; i++) push('multiple', { correctIdx: [0, 1, 2], answerKeys: ['A', 'B', 'C'] });   // 全选；本脚本按"去除"口径统计
     for (let i = 0; i < 24; i++) push('judge', { answerText: '错误', correctIdx: [1], answerKeys: ['B'] });
-    for (let i = 0; i < 6; i++) push('judge', { answerText: '正确', correctIdx: [0], answerKeys: ['A'] });     // 正确项，默认被去除
+    for (let i = 0; i < 6; i++) push('judge', { answerText: '正确', correctIdx: [0], answerKeys: ['A'] });     // 正确项；本脚本按"去除"口径统计
     if (withCase) for (let c = 1; c <= 5; c++) for (let s = 0; s < 3; s++) {
       push('single', { isCase: true, caseId: 'g' + c, caseStem: '案例' + c });
     }
@@ -131,6 +131,18 @@ const toggle = async (id) => {
 const results = [];
 const chk = (ok, name, extra) => { results.push({ ok, name, extra }); };
 
+/* ================= v2.16 起出厂默认：两个「去除」开关都是**关**的 =================
+   本脚本的题库口径（97 / 51 / 24）是"两个开关都打开"时的可用量，
+   所以先按真实用户点击的方式把这两个开关打开，后面的断言才与题库口径一致。
+   （开关默认值是独立的验收点，见 scripts/check_defaults.mjs） */
+await page.evaluate(() => {
+  ['rmAll', 'rmCorrectJudge'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+});
+await page.waitForTimeout(200);
+
 /* ================= G1/G2 没有案例题的题库：默认就该是 100 分 ================= */
 await openBank('bank-nocase', await page.evaluate(() => window.__nocase));
 await toExamMode();
@@ -162,7 +174,7 @@ await setTotal(60);
 sum = await readSum();
 chk(sum.full === 60, 'G6 把小库目标总分改成 60 → 满分 60', String(sum.full));
 chk(await stateTotal() === 60, 'G6 S.examTotal 跟随为 60', String(await stateTotal()));
-const stored60 = await page.evaluate(() => JSON.parse(localStorage.getItem('credit_exam_cfg') || 'null'));
+const stored60 = await page.evaluate(() => JSON.parse(localStorage.getItem(window.__exam.prefsKey()) || 'null'));
 chk(stored60 && stored60.examTotal === 60, 'G6 目标总分写进 localStorage 快照', String(stored60 && stored60.examTotal));
 chk(stored60 && stored60.examCfgByBank && stored60.examCfgByBank['bank-nocase'] &&
   stored60.examCfgByBank['bank-nocase'].total === 60,

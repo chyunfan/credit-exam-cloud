@@ -51,7 +51,7 @@ await page.goto(URL_APP);
 await page.waitForTimeout(1000);
 
 // 四种题型各来几道：3 单选 + 2 多选 + 2 判断 + 1 个案例组（3 小题）
-// 多选故意做成「不是全选」、判断故意答「错误」，这样默认开着的两个「去除」开关不会把它们滤掉。
+// 多选故意做成「不是全选」、判断故意答「错误」，这样两个「去除」开关不论开关都不会把它们滤掉。
 const mkOpts = (texts) => texts.map((t, i) => ({ key: String.fromCharCode(65 + i), text: t }));
 const mkSingle = (id, stem, texts, ci) => ({ id, type: 'single', stem, options: mkOpts(texts), answerKeys: [String.fromCharCode(65 + ci)], answerText: String.fromCharCode(65 + ci), correctIdx: ci, analysis: null });
 const FAKE = [
@@ -77,6 +77,13 @@ await page.evaluate(async (fake) => {
   window.__store.saveArr(window.__store.LS.fav, [4, 5]);        // 收藏 2 题
   window.__exam.setQuestions(fake);
   window.__exam.initEngine();
+  // 本脚本测的是答题卡底色（未答 / 已答 / 对 / 错）与标记共存：
+  // "已答但还没回显答案"才是蓝底，所以这里显式关掉「选完展示正确答案」。
+  // （v2.16 起它**出厂默认是开着的**，开着的话单选答完即回显 → 格子直接变绿/红，C1/D4 的蓝底断言就不成立了；
+  //   这个开关本身的默认值由 scripts/check_defaults.mjs 验收）
+  const ra = document.getElementById('revealAfter');
+  ra.checked = false;
+  ra.dispatchEvent(new Event('change', { bubbles: true }));
   document.getElementById('auth').classList.add('hide');
   document.getElementById('app').classList.remove('hide');
   document.getElementById('topBankName').textContent = '答题卡验收库';

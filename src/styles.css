@@ -142,7 +142,15 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
 .opts.lock .opt.sel:hover,.judge-btns.lock .opt.sel:hover{border-color:var(--brand)}
 .opts.lock .opt.ok:hover,.judge-btns.lock .opt.ok:hover{border-color:var(--ok)}
 .opts.lock .opt.no:hover,.judge-btns.lock .opt.no:hover{border-color:var(--bad)}
-.fb-lock{margin-left:auto;flex:0 0 auto;font-size:12px;color:var(--sub);white-space:nowrap}
+/* 锁定标识：只留一个图标（不再写「已锁定」文字），靠右且不参与换行 */
+.fb-lock{margin-left:auto;flex:0 0 auto;font-size:13px;line-height:1;opacity:.7;white-space:nowrap}
+/* 解析块：跟在反馈行下面，跟着「答案是否回显」同生共死。浅蓝底 + 左侧标题，和灰底的反馈行区分开 */
+.ana{margin-top:10px;padding:10px 14px;border-radius:12px;background:var(--brand-soft);border:1px solid #d9e4ff}
+.ana-h{font-size:12px;font-weight:700;color:var(--brand);letter-spacing:.5px;margin-bottom:4px}
+.ana-b{font-size:13.5px;line-height:1.7;color:#31435f;word-break:break-word;overflow-wrap:anywhere}
+/* 「展示解析」那一行的动态小字：本题库有多少题写了解析 */
+.ana-stat{margin-left:6px}
+.ana-stat.warn{color:#96610a;font-weight:600}
 /* ---- 答题操作条：固定在屏幕最下方（上一题 / 核对 / 下一题） ---- */
 /* 桌面端居中限宽（与 .wrap 同宽，margin:auto 让 fixed 元素水平居中），手机端通栏 */
 .nav{
@@ -289,6 +297,8 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
   .judge-btns{gap:10px}
   .bg{padding:11px 12px;font-size:13px;margin:8px 0 12px}
   .fb-line{font-size:13px;padding:9px 12px;gap:8px}
+  .ana{padding:9px 12px;margin-top:9px}
+  .ana-b{font-size:13px}
   .feedback{font-size:13px;padding:11px 12px}
   .pinfo{font-size:11px}
   .timer{font-size:13px}

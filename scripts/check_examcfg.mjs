@@ -131,6 +131,18 @@ const toggle = async (id) => {
 const results = [];
 const chk = (ok, name, extra) => { results.push({ ok, name, extra }); };
 
+/* ================= v2.16 起出厂默认：两个「去除」开关都是**关**的 =================
+   本脚本里所有可用量口径（小库多选 3、大库 97/51/24/5）都是"两个开关都打开"时的值，
+   所以先按真实用户点击的方式把这两个开关打开，后面的断言才与口径一致。
+   （开关默认值本身是独立的验收点，见 scripts/check_defaults.mjs） */
+await page.evaluate(() => {
+  ['rmAll', 'rmCorrectJudge'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+});
+await page.waitForTimeout(200);
+
 /* ================= T1 题型行只出现在题库实际有的题型 ================= */
 await openBank('bank-small', await page.evaluate(() => window.__small));
 await toExamMode();
@@ -245,7 +257,7 @@ chk(JSON.stringify(await counts()) === JSON.stringify(bigCounts),
   'T6 再切回大库：大库的配置原样带出', JSON.stringify(await counts()));
 
 /* ================= T7 localStorage 落盘 ================= */
-const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('credit_exam_cfg') || 'null'));
+const stored = await page.evaluate(() => JSON.parse(localStorage.getItem(window.__exam.prefsKey()) || 'null'));
 chk(stored && stored.examCfgByBank && stored.examCfgByBank['bank-big'] &&
   JSON.stringify(stored.examCfgByBank['bank-big'].counts) === JSON.stringify(bigCounts),
   'T7 配置已写入 localStorage.credit_exam_cfg.examCfgByBank', JSON.stringify(stored && stored.examCfgByBank));
