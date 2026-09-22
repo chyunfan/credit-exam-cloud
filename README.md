@@ -1,6 +1,7 @@
-# 信贷从业资格考试 · 题库练习（云端版）
+# 云题库 · 练习（云端版）
 
 按模板导入题库（xlsx）、命名、练习、错题/收藏/续做**跨设备云端同步**的题库系统。
+支持导入多套不同题库（单选/多选/判断/案例），互不干扰。
 前端 Vite + Supabase + 自定义账号登录；后端为两个 Vercel Serverless 函数（注册/登录）。
 
 ## 技术栈
@@ -26,6 +27,8 @@ api/
   login.js              # 登录（验密 + 签发 HS256 JWT，payload.sub=exam_accounts.id）
 supabase/
   schema.sql            # 建表 + RLS（在 Supabase SQL Editor 执行一次）
+scripts/
+  inline.mjs            # 构建后把 CSS/JS 内联进 index.html → 输出单文件产物
 ```
 
 ## 一、Supabase 初始化（一次性）
@@ -43,14 +46,29 @@ npm run dev          # http://localhost:5173
 - 无 Supabase 密钥时：登录/题库列表不可用，但首页与导入**校验逻辑**可直接用（把 `src/main.js`
   中 `boot()` 的登录拦截临时跳过即可单测 UI）。完整联调需真实 Supabase。
 
-## 三、部署到 Vercel
+## 三、构建与部署
+
+### 构建（产出单文件）
+```bash
+npm run build        # vite build + 内联 → dist/index.html 自包含单文件
+npm run build:multi  # 仅 vite build（多文件：index.html + assets/）
+```
+`npm run build` 得到的 `dist/index.html`（约 690 KB）已把 CSS/JS 全部内联，
+**可直接单文件部署**（上传/复制到任意静态目录、子路径或 file:// 打开都能正常显示）。
+> 也可接 GitHub → Vercel 自动构建，此时构建命令填 `npm run build`、输出目录 `dist`。
+
+### 部署到 Vercel
 1. 把代码推到 GitHub 仓库。
-2. Vercel 导入该仓库：`Framework = Vite`，构建命令 `vite build`，输出 `dist`。
+2. Vercel 导入该仓库：`Framework = Vite`，构建命令 `npm run build`，输出 `dist`。
    - `vercel.json` 已声明 `api/register.js`、`api/login.js` 为函数。
 3. 在 Vercel **项目 → Settings → Environment Variables** 添加：
    - `VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`（前端用，会打包进客户端）
    - `SUPABASE_URL`、`SUPABASE_JWT_SECRET`、`SUPABASE_SERVICE_ROLE_KEY`（仅服务端）
 4. 部署完成后访问分配的域名即可。
+
+> ⚠️ 单文件部署（如上传到 `chyunfan.cn/子路径`）时，`/api/register`、`/api/login`
+> 这两个函数**不会**一起上线，登录/注册会 404。此种场景需把 `api/` 两个函数
+> 另行部署（Vercel/云函数），或改用完整的 Vercel 仓库部署。
 
 ## 四、题库模板（.xlsx，10 列）
 | 题型 | 案例材料 | 题干 | A | B | C | D | E | F | 答案 | 解析 |
@@ -68,3 +86,10 @@ npm run dev          # http://localhost:5173
 - 登录态存于浏览器 localStorage → 同设备自动沿用上次账号；点「注销」清除可换号。
 - 自定义账号（账号≥5 位、密码≥6 位，均支持中文），不依赖 Supabase Auth。
 - 内置「默认题库」为只读本地题库（视前端需要接入），云端题库由用户自行导入。
+
+## 常见问题
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 页面无样式、所有界面堆在一起 | CSS/JS 404（`.hide` 失效） | 用 `npm run build` 出单文件；或确认 `assets/` 一起部署 |
+| 登录成功但题库列表空白 | `SUPABASE_JWT_SECRET` 不匹配 | 与后台 JWT Secret 核对一致 |
+| 登录/注册报 404 | 未部署 `api/` 函数 | 走完整 Vercel 部署（含 `api/`） |
