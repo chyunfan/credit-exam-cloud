@@ -32,9 +32,16 @@ async function onFile(e) {
       document.getElementById('saveBankBtn').disabled = true;
     } else {
       pendingImport = { questions: res.questions, caseCount: res.caseCount };
-      document.getElementById('importPreview').innerHTML =
-        '<div class="feedback ok show">解析成功：共 <b>' + res.questions.length +
+      let html = '<div class="feedback ok show">解析成功：共 <b>' + res.questions.length +
         '</b> 题，案例 <b>' + res.caseCount + '</b> 组。</div>';
+      const ws = res.warnings || [];
+      if (ws.length) {
+        html += '<div class="feedback warn show">提醒（<b>不影响导入</b>，可保存后再核对）：<br>' +
+          ws.slice(0, 20).map(x => '· ' + x).join('<br>') +
+          (ws.length > 20 ? '<br>· …另有 ' + (ws.length - 20) + ' 条同类提醒' : '') +
+          '</div>';
+      }
+      document.getElementById('importPreview').innerHTML = html;
       document.getElementById('saveBankBtn').disabled = false;
     }
     document.getElementById('bankName').value = file.name.replace(/\.xlsx?$/i, '');

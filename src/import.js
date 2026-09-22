@@ -45,14 +45,17 @@ function parseJudge(raw) {
 
 /**
  * 解析 xlsx 题库。
- * @returns {{ok:boolean, questions:Array, caseCount:number, errors:Array, rowCount:number}}
+ * errors   —— 阻断性问题，必须修正后才能导入
+ * warnings —— 提示性问题，不阻断导入（如多选全选）
+ * @returns {{ok:boolean, questions:Array, caseCount:number, errors:Array, warnings:Array, rowCount:number}}
  */
 export function parseWorkbook(arrayBuffer) {
   const errors = [];
+  const warnings = [];
   const wb = XLSX.read(arrayBuffer, { type: 'array' });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-  if (!rows.length) return { ok: false, questions: [], caseCount: 0, errors: ['文件为空'], rowCount: 0 };
+  if (!rows.length) return { ok: false, questions: [], caseCount: 0, errors: ['文件为空'], warnings: [], rowCount: 0 };
 
   const header = rows[0].map(c => norm(c));
   const col = {
@@ -65,7 +68,7 @@ export function parseWorkbook(arrayBuffer) {
   const optCols = HEADERS.opt.map((_, i) => findCol(header, [HEADERS.opt[i]])).filter(i => i >= 0);
 
   if (col.type < 0 || col.stem < 0 || col.answer < 0) {
-    return { ok: false, questions: [], caseCount: 0, errors: ['表头缺少必要列：题型 / 题干 / 答案'], rowCount: 0 };
+    return { ok: false, questions: [], caseCount: 0, errors: ['表头缺少必要列：题型 / 题干 / 答案'], warnings: [], rowCount: 0 };
   }
 
   const questions = [];
@@ -136,7 +139,11 @@ export function parseWorkbook(arrayBuffer) {
       } else { // multiple
         if (letters.length < 2) { errors.push(`第 ${lineNo} 行：多选题答案至少 2 个，当前 ${letters.length} 个`); continue; }
         if (options.length < 2) { errors.push(`第 ${lineNo} 行：多选题至少需要 2 个选项`); continue; }
-        if (letters.length === options.length) { errors.push(`第 ${lineNo} 行：多选题不能全选`); continue; }
+        // 多选「答案覆盖全部选项」在真实题库里是合法答案（如"以下哪些属于…"），
+        // 只提醒、不阻断导入 —— 早期版本在此处直接报错，会误伤整批真题。
+        if (letters.length === options.length) {
+          warnings.push(`第 ${lineNo} 行：多选题答案为全选（${letters.join('')}），请确认是否符合预期`);
+        }
         answerKeys = letters;
         correctIdx = letters.map(l => optKeys.indexOf(l)).sort((a, b) => a - b);
       }
@@ -168,6 +175,7 @@ export function parseWorkbook(arrayBuffer) {
     questions,
     caseCount: caseSeq,
     errors,
+    warnings,
     rowCount: questions.length
   };
 }

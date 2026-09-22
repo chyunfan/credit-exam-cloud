@@ -90,6 +90,7 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
 .feedback.show{display:block}
 .feedback.ok{background:var(--ok-soft);color:#0c7a47}
 .feedback.no{background:var(--bad-soft);color:#b02328}
+.feedback.warn{background:#fff6e5;color:#96610a;border:1px solid #ffe0a8}
 .answer-line{margin-top:10px;font-size:14px;padding:10px 14px;background:#f7f9fc;border-radius:10px;display:none}
 .answer-line.show{display:block}
 .answer-line b{color:var(--ok)}
