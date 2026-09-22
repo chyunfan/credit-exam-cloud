@@ -1,9 +1,10 @@
 import { initAuth, getSession, getUsername, logout } from './auth.js';
 import { initBanks, renderBanks, openBankById } from './banks.js';
-import { setQuestions, initEngine, refreshHomeUI, syncPrefsFromCloud, setBankKey } from './engine.js';
+import { initEngine, refreshHomeUI, syncPrefsFromCloud, setBankKey, setQuestions } from './engine.js';
 import { loadBankState } from './store.js';
+import { initAdmin, loadMe, applyAdminEntry } from './admin.js';
 
-const APP_SCREENS = ['banks', 'home', 'practice', 'result'];
+const APP_SCREENS = ['banks', 'admin', 'home', 'practice', 'result'];
 
 function showScreen(name) {
   if (name === 'auth') {
@@ -42,7 +43,16 @@ async function handleOpenBank({ id, name, questions }) {
 }
 
 function enterApp() {
-  showBanks();
+  // 先拿到「我是谁、是不是管理员」，再渲染题库列表（列表里的按钮按权限显示）
+  return refreshIdentity().then(showBanks);
+}
+
+/** 拉取身份资料 → 刷新顶部栏入口与用户名 */
+async function refreshIdentity() {
+  await loadMe();
+  applyAdminEntry();
+  const el = document.getElementById('topUser');
+  if (el) el.textContent = getUsername() || '已登录';
 }
 
 function doLogout() {
@@ -55,11 +65,17 @@ async function boot() {
   initAuth({ onLogin: enterApp });
   initBanks({ onOpenBank: handleOpenBank });
   initEngine();
+  initAdmin({
+    onBack: showBanks,
+    onShow: () => showScreen('admin'),
+    onMeChange: () => { renderBanks(); }
+  });
 
   document.getElementById('toBanks').addEventListener('click', showBanks);
   document.getElementById('logoutBtn').addEventListener('click', doLogout);
 
   if (getSession()) {
+    await refreshIdentity();   // 管理员入口的显隐取决于这一步
     const saved = (() => { try { return JSON.parse(localStorage.getItem('ce_current_bank') || 'null'); } catch { return null; } })();
     if (saved && saved.id) {
       // openBankById 内部会 await handleOpenBank：加载该题库状态并渲染首页

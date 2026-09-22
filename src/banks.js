@@ -1,9 +1,16 @@
 import * as XLSX from 'xlsx';
 import { supabase, getUserId } from './supabase.js';
 import { parseWorkbook, buildTemplateWorkbook, buildBankWorkbook } from './import.js';
+import { getUsername } from './auth.js';
+import { isAdmin, knownTags, ensureUsers } from './admin.js';
 
 let pendingImport = null;   // { questions, caseCount }
 let onOpenBank = null;
+
+// 正在设置「可见范围」的题库 + 当前勾选的部门/角色
+let scopeBank = null;
+let scopeDepts = [];
+let scopeRoles = [];
 
 export function initBanks(cb) {
   onOpenBank = cb.onOpenBank;
@@ -16,6 +23,7 @@ export function initBanks(cb) {
   document.getElementById('importClose').addEventListener('click', closeImport);
   document.getElementById('importMask').addEventListener('click', closeImport);
   document.getElementById('saveBankBtn').addEventListener('click', saveImport);
+  bindScopeModal();
 }
 
 async function onFile(e) {
@@ -41,6 +49,8 @@ async function onFile(e) {
           (ws.length > 20 ? '<br>· …另有 ' + (ws.length - 20) + ' 条同类提醒' : '') +
           '</div>';
       }
+      html += '<div class="muted" style="margin-top:8px">保存后该题库<b>默认全员可见</b>（题库后会标注上传者）。'
+        + '如需限定部门或角色，请联系管理员调整「可见范围」。</div>';
       document.getElementById('importPreview').innerHTML = html;
       document.getElementById('saveBankBtn').disabled = false;
     }
@@ -66,9 +76,11 @@ async function saveImport() {
   if (!userId) { alert('登录状态丢失，请重新登录'); return; }
   const { error } = await supabase.from('exam_banks').insert({
     user_id: userId,
+    owner_name: getUsername() || null,   // 上传者：列表里显示「上传者：xxx」
     name,
     questions: pendingImport.questions,
-    case_count: pendingImport.caseCount
+    case_count: pendingImport.caseCount,
+    visibility: 'public'                 // 人人可导入；导入后默认全员可见
   });
   if (error) { alert('保存失败：' + error.message); return; }
   closeImport();
@@ -76,9 +88,10 @@ async function saveImport() {
 }
 
 async function listBanks() {
+  const me = getUserId();
   const { data, error } = await supabase
     .from('exam_banks')
-    .select('id,name,case_count,created_at,questions')
+    .select('id,name,case_count,created_at,questions,user_id,owner_name,visibility,allow_depts,allow_roles')
     .order('created_at', { ascending: false });
   if (error) { alert('加载题库失败：' + error.message); return []; }
   return (data || []).map(b => ({
@@ -86,8 +99,49 @@ async function listBanks() {
     name: b.name,
     caseCount: b.case_count || 0,
     count: Array.isArray(b.questions) ? b.questions.length : 0,
-    createdAt: b.created_at
+    createdAt: b.created_at,
+    userId: b.user_id,
+    ownerName: b.owner_name || '',
+    visibility: b.visibility || 'public',
+    allowDepts: Array.isArray(b.allow_depts) ? b.allow_depts : [],
+    allowRoles: Array.isArray(b.allow_roles) ? b.allow_roles : [],
+    mine: b.user_id === me
   }));
+}
+
+/** 可见范围徽标 */
+function visTag(b) {
+  if (b.visibility === 'private') return '<span class="vis-tag vis-private">仅自己可见</span>';
+  if (b.visibility === 'scope') {
+    const parts = [];
+    if (b.allowDepts.length) parts.push('部门 ' + b.allowDepts.join('、'));
+    if (b.allowRoles.length) parts.push('角色 ' + b.allowRoles.join('、'));
+    return '<span class="vis-tag vis-scope">限定：' + (parts.length ? esc(parts.join(' · ')) : '指定范围') + '</span>';
+  }
+  return '<span class="vis-tag vis-public">全员可见</span>';
+}
+
+function bankRow(b) {
+  const adm = isAdmin();
+  const canEdit = b.mine || adm;
+  const acts = [];
+  acts.push('<button class="btn btn-primary btn-sm act-open" type="button">练习</button>');
+  if (canEdit) acts.push('<button class="btn btn-ghost btn-sm act-rename" type="button">重命名</button>');
+  acts.push('<button class="btn btn-ghost btn-sm act-export" type="button">导出</button>');
+  if (adm) acts.push('<button class="btn btn-ghost btn-sm act-scope" type="button">可见范围</button>');
+  if (canEdit) acts.push('<button class="btn btn-ghost btn-sm act-del" type="button">删除</button>');
+
+  const meta = [b.count + ' 题', '案例 ' + b.caseCount + ' 组',
+    '上传者：' + esc(b.ownerName || '未知') + (b.mine ? '（我）' : '')].join(' · ');
+
+  return `
+    <div class="bank-row" data-id="${esc(b.id)}">
+      <div class="bank-info">
+        <div class="bank-name">${esc(b.name)} ${visTag(b)}</div>
+        <div class="muted">${meta}</div>
+      </div>
+      <div class="bank-acts">${acts.join('')}</div>
+    </div>`;
 }
 
 export async function renderBanks() {
@@ -97,27 +151,26 @@ export async function renderBanks() {
     box.innerHTML = '<div class="muted" style="padding:20px 0;text-align:center">还没有题库，点击上方「导入题库」开始吧。</div>';
     return;
   }
-  box.innerHTML = banks.map(b => `
-    <div class="bank-row" data-id="${b.id}">
-      <div class="bank-info">
-        <div class="bank-name">${escapeHtml(b.name)}</div>
-        <div class="muted">${b.count} 题 · 案例 ${b.caseCount} 组</div>
-      </div>
-      <div class="bank-acts">
-        <button class="btn btn-primary btn-sm act-open">练习</button>
-        <button class="btn btn-ghost btn-sm act-rename">重命名</button>
-        <button class="btn btn-ghost btn-sm act-export">导出</button>
-        <button class="btn btn-ghost btn-sm act-del">删除</button>
-      </div>
-    </div>`).join('');
+
+  const mine = banks.filter(b => b.mine);
+  const shared = banks.filter(b => !b.mine);
+  // 管理员看到的「共享」里含别人的私有库（RLS 对管理员放开），标注出来便于管理
+  let html = '';
+  if (mine.length) html += '<div class="list-head">我上传的（' + mine.length + '）</div>' + mine.map(bankRow).join('');
+  if (shared.length) {
+    html += '<div class="list-head">其他人上传的（' + shared.length + '）</div>' + shared.map(bankRow).join('');
+  }
+  box.innerHTML = html;
 
   box.querySelectorAll('.bank-row').forEach(row => {
     const id = row.dataset.id;
     const b = banks.find(x => x.id === id);
-    row.querySelector('.act-open').addEventListener('click', () => openBank(b));
-    row.querySelector('.act-rename').addEventListener('click', () => renameBank(b));
-    row.querySelector('.act-export').addEventListener('click', () => exportBank(b));
-    row.querySelector('.act-del').addEventListener('click', () => deleteBank(b));
+    const on = (sel, fn) => { const el = row.querySelector(sel); if (el) el.addEventListener('click', fn); };
+    on('.act-open', () => openBank(b));
+    on('.act-rename', () => renameBank(b));
+    on('.act-export', () => exportBank(b));
+    on('.act-scope', () => openScope(b));
+    on('.act-del', () => deleteBank(b));
   });
 }
 
@@ -144,7 +197,8 @@ async function renameBank(b) {
 }
 
 async function deleteBank(b) {
-  if (!confirm(`确定删除题库「${b.name}」？\n该题库下的错题/收藏/进度也会一并删除，且不可恢复。`)) return;
+  const extra = b.mine ? '' : '\n注意：这是其他用户上传的题库。';
+  if (!confirm(`确定删除题库「${b.name}」？${extra}\n该题库下的错题/收藏/进度也会一并删除，且不可恢复。`)) return;
   const { error } = await supabase.from('exam_banks').delete().eq('id', b.id);
   if (error) { alert('删除失败：' + error.message); return; }
   await renderBanks();
@@ -157,6 +211,139 @@ async function exportBank(b) {
   XLSX.writeFile(wb, (b.name || '题库') + '.xlsx');
 }
 
-function escapeHtml(s) {
+// ============================================================
+// 可见范围（管理员）
+// ============================================================
+function bindScopeModal() {
+  document.getElementById('scopeClose').addEventListener('click', closeScope);
+  document.getElementById('scopeMask').addEventListener('click', closeScope);
+  document.getElementById('scopeCancel').addEventListener('click', closeScope);
+  document.getElementById('scopeSave').addEventListener('click', saveScope);
+  document.getElementById('scopeOpts').addEventListener('change', syncScopeUI);
+  document.getElementById('deptChips').addEventListener('click', e => onChipClick(e, 'dept'));
+  document.getElementById('roleChips').addEventListener('click', e => onChipClick(e, 'role'));
+  addTagInput('deptInput', 'dept');
+  addTagInput('roleInput', 'role');
+}
+
+function addTagInput(id, kind) {
+  const inp = document.getElementById(id);
+  inp.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const v = inp.value.trim();
+    if (!v) return;
+    const list = kind === 'dept' ? scopeDepts : scopeRoles;
+    if (list.indexOf(v) < 0) list.push(v);
+    inp.value = '';
+    renderScopeChips();
+  });
+}
+
+function onChipClick(e, kind) {
+  const tag = e.target.closest('.tag');
+  if (!tag) return;
+  const v = tag.dataset.v;
+  const list = kind === 'dept' ? scopeDepts : scopeRoles;
+  const i = list.indexOf(v);
+  if (i < 0) list.push(v); else list.splice(i, 1);
+  renderScopeChips();
+}
+
+function openScope(b) {
+  scopeBank = b;
+  scopeDepts = b.allowDepts.slice();
+  scopeRoles = b.allowRoles.slice();
+  document.getElementById('scopeBankName').textContent = b.name;
+  const vis = ['public', 'scope', 'private'].indexOf(b.visibility) >= 0 ? b.visibility : 'public';
+  const radio = document.querySelector('input[name="scopeVis"][value="' + vis + '"]');
+  if (radio) radio.checked = true;
+  scopeMsg('');
+  syncScopeUI();
+  document.getElementById('scopeModal').classList.remove('hide');
+  // 首次打开时把用户列表拉回来，好给出「常用部门 / 角色」候选（拉不到也能手工输入）
+  ensureUsers().then(() => {
+    if (scopeBank && !document.getElementById('scopeDetail').classList.contains('hide')) renderScopeChips();
+  });
+}
+
+function closeScope() {
+  document.getElementById('scopeModal').classList.add('hide');
+  scopeBank = null;
+}
+
+function currentVis() {
+  const r = document.querySelector('input[name="scopeVis"]:checked');
+  return r ? r.value : 'public';
+}
+
+function syncScopeUI() {
+  const vis = currentVis();
+  const detail = document.getElementById('scopeDetail');
+  detail.classList.toggle('hide', vis !== 'scope');
+  document.querySelectorAll('#scopeOpts .scope-opt').forEach(el => {
+    el.classList.toggle('on', el.querySelector('input').checked);
+  });
+  if (vis === 'scope') renderScopeChips();
+
+  const tips = {
+    public: '所有登录用户在「管理题库」里都能看到这个题库。',
+    scope: '只有部门或角色命中的人能看到；其他人（除管理员外）看不到。',
+    private: '除管理员外，只有上传者本人能看到并练习。'
+  };
+  document.getElementById('scopeHint').textContent = tips[vis];
+}
+
+function renderScopeChips() {
+  const known = knownTags();
+  [['dept', scopeDepts, known.depts], ['role', scopeRoles, known.roles]].forEach(([kind, list, cands]) => {
+    const box = document.getElementById(kind + 'Chips');
+    if (!box) return;
+    const picked = list.map(v =>
+      '<span class="tag on" data-kind="' + kind + '" data-v="' + esc(v) + '">' + esc(v) + '<i>✕</i></span>').join('');
+    const rest = cands.filter(v => list.indexOf(v) < 0);
+    const candHtml = rest.length
+      ? '<span class="tag-sep">常用：</span>' + rest.slice(0, 12).map(v =>
+        '<span class="tag" data-kind="' + kind + '" data-v="' + esc(v) + '">+ ' + esc(v) + '</span>').join('')
+      : '';
+    const empty = (!list.length && !rest.length)
+      ? '<span class="muted" style="font-size:12px">还没有可选值，直接在下面输入后回车添加（部门 / 角色在「用户管理」里维护）</span>'
+      : '';
+    box.innerHTML = picked + candHtml + empty;
+  });
+}
+
+async function saveScope() {
+  if (!scopeBank) return;
+  const vis = currentVis();
+  if (vis === 'scope' && !scopeDepts.length && !scopeRoles.length) {
+    scopeMsg('请至少选择一个部门或角色，否则没有人能看到这个题库。', true);
+    return;
+  }
+  const btn = document.getElementById('scopeSave');
+  btn.disabled = true;
+  try {
+    const { error } = await supabase.from('exam_banks').update({
+      visibility: vis,
+      allow_depts: vis === 'scope' ? scopeDepts : [],
+      allow_roles: vis === 'scope' ? scopeRoles : []
+    }).eq('id', scopeBank.id);
+    if (error) throw new Error(error.message);
+    closeScope();
+    await renderBanks();
+  } catch (e) {
+    scopeMsg('保存失败：' + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function scopeMsg(t, bad) {
+  const el = document.getElementById('scopeMsg');
+  el.textContent = t || '';
+  el.style.color = bad ? 'var(--bad)' : '';
+}
+
+function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

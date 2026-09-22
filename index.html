@@ -46,6 +46,9 @@
         <button class="btn btn-ghost btn-sm" id="toBanks" type="button" title="管理题库">
           <span class="tb-long">管理题库</span><span class="tb-short">题库</span>
         </button>
+        <button class="btn btn-ghost btn-sm hide" id="toAdmin" type="button" title="用户管理（管理员）">
+          <span class="tb-long">用户管理</span><span class="tb-short">用户</span>
+        </button>
         <button class="btn btn-ghost btn-sm" id="logoutBtn" type="button" title="注销退出">
           <span class="tb-long">注销</span><span class="tb-short">退出</span>
         </button>
@@ -65,6 +68,25 @@
           <div class="muted" style="margin-top:8px">题型仅限 单选 / 多选 / 判断 / 案例；选项最多 A–F。点「下载空模板」查看格式。</div>
         </div>
         <div id="bankList"></div>
+      </div>
+    </div>
+
+    <!-- 用户管理（仅管理员可见入口） -->
+    <div id="admin" class="hide">
+      <div class="card">
+        <div class="section">
+          <h2>用户管理 <span class="muted" style="font-size:12px;font-weight:400">管理员专用</span></h2>
+          <div class="muted" style="margin-bottom:10px">
+            在这里给账号设定「部门 / 角色」，并指定谁是管理员。
+            题库的可见范围可按部门或角色限制；设好后到「管理题库」里对某个题库点「可见范围」。
+          </div>
+          <div class="admin-bar">
+            <input id="userSearch" class="field" placeholder="搜索账号 / 部门 / 角色">
+            <button id="userReload" class="btn btn-ghost btn-sm" type="button">刷新</button>
+            <span id="adminMsg" class="muted"></span>
+          </div>
+        </div>
+        <div id="userList"></div>
       </div>
     </div>
 
@@ -249,6 +271,43 @@
       <div id="importPreview" style="margin-bottom:12px"></div>
       <input id="bankName" class="field" placeholder="题库名称" style="margin-bottom:12px">
       <button id="saveBankBtn" class="btn btn-primary" type="button" disabled>保存题库</button>
+    </div>
+  </div>
+</div>
+
+<!-- 可见范围弹层（管理员） -->
+<div class="modal hide" id="scopeModal">
+  <div class="modal-mask" id="scopeMask"></div>
+  <div class="modal-box">
+    <div class="modal-head"><span>可见范围 · <b id="scopeBankName">—</b></span><button class="modal-x" id="scopeClose" type="button">✕</button></div>
+    <div class="modal-body">
+      <div class="scope-opts" id="scopeOpts">
+        <label class="scope-opt"><input type="radio" name="scopeVis" value="public">
+          <span><b>全员可见</b><i>所有登录用户在「管理题库」里都能看到并练习</i></span></label>
+        <label class="scope-opt"><input type="radio" name="scopeVis" value="scope">
+          <span><b>按部门 / 角色可见</b><i>只对指定部门或角色的人开放</i></span></label>
+        <label class="scope-opt"><input type="radio" name="scopeVis" value="private">
+          <span><b>仅自己可见</b><i>普通用户看不到；管理员始终能看到</i></span></label>
+      </div>
+      <div id="scopeDetail" class="hide">
+        <div class="scope-grp">
+          <div class="scope-lbl">部门</div>
+          <div class="chips" id="deptChips"></div>
+          <input class="field" id="deptInput" placeholder="输入部门名称后回车添加，如：信贷部">
+        </div>
+        <div class="scope-grp">
+          <div class="scope-lbl">角色</div>
+          <div class="chips" id="roleChips"></div>
+          <input class="field" id="roleInput" placeholder="输入角色名称后回车添加，如：客户经理">
+        </div>
+        <div class="muted" style="font-size:12px">部门与角色来自「用户管理」里给每个人的设定；命中任一项即可见。</div>
+      </div>
+      <div class="muted scope-hint" id="scopeHint"></div>
+      <div id="scopeMsg" class="muted" style="min-height:16px;margin-top:6px"></div>
+      <div class="scope-foot">
+        <button class="btn btn-ghost" id="scopeCancel" type="button">取消</button>
+        <button class="btn btn-primary" id="scopeSave" type="button">保存</button>
+      </div>
     </div>
   </div>
 </div>

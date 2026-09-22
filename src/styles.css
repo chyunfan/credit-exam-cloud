@@ -313,3 +313,63 @@ input[type=number]{width:90px;padding:8px 10px;border:1.5px solid var(--line);bo
   .bank-row{flex-direction:column;align-items:stretch}
   .bank-acts{justify-content:flex-start}
 }
+
+/* ============================================================
+   题库可见范围 + 用户管理（管理员）
+   ============================================================ */
+.list-head{font-size:12.5px;font-weight:700;color:var(--sub);margin:14px 0 8px}
+#bankList>.list-head:first-child{margin-top:2px}
+
+.vis-tag{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:1px}
+.vis-public{background:var(--ok-soft);color:#1a7f4b}
+.vis-scope{background:var(--brand-soft);color:#1b5fbf}
+.vis-private{background:var(--chip);color:#5a6b7f}
+
+.admin-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.admin-bar .field{flex:1;min-width:160px;margin-bottom:0}
+.admin-bar .muted{font-size:12.5px}
+
+.user-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);
+  border-radius:12px;margin-bottom:10px;background:#fff}
+.user-row.is-adm{border-color:#cfe4d8;background:#fbfefc}
+.u-main{flex:1;min-width:0}
+.u-name{font-weight:700;font-size:14.5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.u-badge{font-size:11px;font-weight:600;color:#1a7f4b;background:var(--ok-soft);border-radius:999px;padding:2px 8px}
+.u-badge.me{color:#1b5fbf;background:var(--brand-soft)}
+.u-fields{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.u-f{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub)}
+.u-f>span{white-space:nowrap;flex:0 0 auto}
+.u-f .field{width:120px;padding:8px 10px;font-size:13.5px;margin-bottom:0}
+.u-adm{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--sub);white-space:nowrap}
+
+.scope-opts{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.scope-opt{display:flex;gap:9px;align-items:flex-start;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer}
+.scope-opt.on{border-color:var(--brand);background:#f5f9ff}
+.scope-opt input{margin-top:3px;flex:0 0 auto}
+.scope-opt span{display:flex;flex-direction:column;gap:2px}
+.scope-opt b{font-size:14px}
+.scope-opt i{font-style:normal;font-size:12px;color:var(--sub)}
+.scope-grp{margin-bottom:12px}
+.scope-lbl{font-size:12.5px;font-weight:600;color:var(--sub);margin-bottom:6px}
+.scope-grp .field{margin-bottom:0}
+.scope-hint{font-size:12px;margin-bottom:2px}
+.scope-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+/* 弹窗底部按钮：不要撑满整行（否则窄屏下「取消」被压成两行） */
+.scope-foot .btn{width:auto;min-width:88px;white-space:nowrap;padding:11px 20px}
+#deptChips:not(:empty),#roleChips:not(:empty){margin-bottom:8px}
+
+.tag{display:inline-flex;align-items:center;gap:5px;border:1.5px solid var(--line);border-radius:999px;
+  padding:6px 12px;font-size:13px;cursor:pointer;background:#fff;margin:0 6px 6px 0}
+.tag.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.tag i{font-style:normal;opacity:.75;font-size:12px}
+.tag-sep{font-size:12px;color:var(--sub);margin-right:4px}
+
+@media(max-width:560px){
+  .user-row{flex-direction:column;align-items:stretch;gap:8px}
+  .u-fields{gap:6px}
+  .u-f{flex:1 1 46%}
+  .u-f .field{width:100%}
+  .u-adm{flex:0 0 auto}
+  .u-save{width:100%}
+  .modal-box{width:94%}
+}
