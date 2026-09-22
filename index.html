@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>信贷从业资格考试 · 题库练习（云端版）</title>
+  <link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ 登录 / 注册 ============ -->
+  <div id="auth" class="hide">
+    <div class="card auth-card">
+      <header class="top" style="justify-content:center;margin-bottom:6px">
+        <div class="logo">信</div>
+        <div>
+          <h1>信贷考试 · 题库练习</h1>
+          <p>云端版 · 自定义账号</p>
+        </div>
+      </header>
+      <div class="seg">
+        <button id="tabLogin" class="active" type="button">登录</button>
+        <button id="tabReg" type="button">注册</button>
+      </div>
+      <input id="authUser" class="field" placeholder="账号（至少 5 位，支持中文）" autocomplete="username">
+      <input id="authPass" class="field" type="password" placeholder="密码（至少 6 位，支持中文）" autocomplete="current-password">
+      <div id="authMsg" class="muted" style="min-height:18px"></div>
+      <button id="authSubmit" class="btn btn-primary" type="button">登录</button>
+    </div>
+  </div>
+
+  <!-- ============ 应用主体 ============ -->
+  <div id="app" class="hide">
+    <div class="topbar2">
+      <div class="tb-left">
+        <span class="logo sm">信</span>
+        <div>
+          <div class="tb-title">信贷考试 · 题库练习</div>
+          <div class="tb-sub">当前题库：<b id="topBankName">—</b></div>
+        </div>
+      </div>
+      <div class="tb-right">
+        <span class="muted" id="topUser"></span>
+        <button class="btn btn-ghost btn-sm" id="toBanks" type="button">管理题库</button>
+        <button class="btn btn-ghost btn-sm" id="logoutBtn" type="button">注销</button>
+      </div>
+    </div>
+
+    <!-- 题库管理 -->
+    <div id="banks" class="hide">
+      <div class="card">
+        <div class="section">
+          <h2>导入题库（.xlsx 模板）</h2>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button id="importBtn" class="btn btn-primary" type="button">导入题库</button>
+            <button id="tplBtn" class="btn btn-ghost btn-sm" type="button">下载空模板</button>
+            <input type="file" id="fileInput" accept=".xlsx,.xls" class="hide">
+          </div>
+          <div class="muted" style="margin-top:8px">题型仅限 单选 / 多选 / 判断 / 案例；选项最多 A–F。点「下载空模板」查看格式。</div>
+        </div>
+        <div id="bankList"></div>
+      </div>
+    </div>
+
+    <!-- 首页（练习配置，复用原引擎） -->
+    <div id="home" class="hide">
+      <div class="resume-banner hide" id="resumeBanner">
+        <div class="rb-left">
+          <div class="rb-text">检测到上次未完成的练习（第 <b id="rbIdx">0</b> / <span id="rbTotal">0</span> 题）</div>
+          <div class="rb-types" id="rbTypes"></div>
+        </div>
+        <div class="rb-btns">
+          <button class="btn btn-primary sm" id="resumeBtn">继续练习</button>
+          <button class="btn ghost sm" id="discardBtn">重新开始</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section">
+          <h2>练习模式</h2>
+          <div class="mode-grid">
+            <div class="mode active" data-mode="sequential">
+              <div class="ic">📚</div><div class="t">顺序练习</div>
+              <div class="d">按题库顺序逐题作答，可随时看答案、查进度</div>
+            </div>
+            <div class="mode" data-mode="exam">
+              <div class="ic">📝</div><div class="t">组卷模拟考试</div>
+              <div class="d">随机抽取组卷，限时答题，交卷后出成绩</div>
+            </div>
+            <div class="mode" data-mode="wrong">
+              <div class="ic">📕</div><div class="t">错题练习</div>
+              <div class="d">仅练习错题集中的题目（忽略“去除”类开关）</div>
+              <div class="counts" id="wrongCounts"></div>
+            </div>
+            <div class="mode" data-mode="fav">
+              <div class="ic">⭐</div><div class="t">收藏练习</div>
+              <div class="d">仅练习你收藏的题目</div>
+              <div class="counts" id="favCounts"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>错题集 / 收藏</h2>
+          <div class="lib-btns">
+            <button type="button" class="lib-btn2 wrong" id="wrongLibBtn">
+              <span class="lib-ic">📕</span><span class="lib-t">错题集回顾</span><span class="lib-n" id="wrongCnt">0</span>
+            </button>
+            <button type="button" class="lib-btn2 fav" id="favLibBtn">
+              <span class="lib-ic">⭐</span><span class="lib-t">收藏回顾</span><span class="lib-n" id="favCnt">0</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>题目类型</h2>
+          <div class="chips" id="typeChips">
+            <span class="chip active" data-t="single">单选题</span>
+            <span class="chip active" data-t="multiple">多选题</span>
+            <span class="chip active" data-t="judge">判断题</span>
+            <span class="chip active" data-t="case">案例题</span>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>练习选项</h2>
+          <div class="opt-row">
+            <div><div class="lbl">默认显示答案</div><div class="hint">开启后每题直接显示正确答案（学习模式）</div></div>
+            <label class="switch"><input type="checkbox" id="showAns"><span class="slider"></span></label>
+          </div>
+          <div class="opt-row">
+            <div><div class="lbl">去除多选全选题目</div><div class="hint">开启后剔除“所有选项都正确”的多选题</div></div>
+            <label class="switch"><input type="checkbox" id="rmAll" checked><span class="slider"></span></label>
+          </div>
+          <div class="opt-row">
+            <div><div class="lbl">去除正确的判断题</div><div class="hint">开启后剔除答案为“正确”的判断题</div></div>
+            <label class="switch"><input type="checkbox" id="rmCorrectJudge" checked><span class="slider"></span></label>
+          </div>
+          <div class="opt-row">
+            <div><div class="lbl">选完展示正确答案</div><div class="hint">单选/判断题选完即显示；多选题在练习中点「确定」核对并显示对错</div></div>
+            <label class="switch"><input type="checkbox" id="revealAfter"><span class="slider"></span></label>
+          </div>
+          <div class="opt-row">
+            <div><div class="lbl">答对自动移出错题集</div><div class="hint">开启后某道错题再次答对即从错题集移除</div></div>
+            <label class="switch"><input type="checkbox" id="autoRemoveWrong" checked><span class="slider"></span></label>
+          </div>
+        </div>
+
+        <div class="filter-stat" id="filterStat"></div>
+        <button class="btn btn-primary" id="startBtn">开始练习</button>
+
+        <div class="section" id="examCfg">
+          <div class="collapsible-head" id="examCfgHead">
+            <h2>组卷设置（满分 100 分）</h2>
+            <span class="arr" id="examCfgArr">▸</span>
+          </div>
+          <div id="examCfgBody" class="collapsible-body hide">
+            <div class="opt-row"><div class="lbl">单选题</div><div class="num-row"><input type="number" class="ec" data-t="single" min="0" max="200" value="60"><span class="muted">题 × 0.5 分</span></div></div>
+            <div class="opt-row"><div class="lbl">多选题</div><div class="num-row"><input type="number" class="ec" data-t="multiple" min="0" max="200" value="40"><span class="muted">题 × 1 分</span></div></div>
+            <div class="opt-row"><div class="lbl">判断题</div><div class="num-row"><input type="number" class="ec" data-t="judge" min="0" max="200" value="20"><span class="muted">题 × 0.5 分</span></div></div>
+            <div class="opt-row"><div class="lbl">案例题</div><div class="num-row"><input type="number" class="ec" data-t="case" min="0" max="50" value="5"><span class="muted">组 × 4 分</span></div></div>
+            <div class="opt-row"><div class="lbl">考试时长</div><div class="num-row"><input type="number" id="examMin" min="5" max="240" value="90"><span class="muted">分钟（时间到自动交卷）</span></div></div>
+            <div class="muted" style="text-align:right">理论满分：<b id="maxScore">100</b> 分</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 练习 -->
+    <div id="practice" class="hide">
+      <div class="card">
+        <div class="topbar">
+          <button type="button" class="btn-quit" id="quitBtn">← 退出</button>
+          <button type="button" class="btn-sheet hide" id="sheetToggle">
+            <span class="arr" id="sheetArr">▾</span> 答题卡 <span id="sheetCount">(0/0)</span>
+          </button>
+        </div>
+        <div class="pbar"><i id="pbarFill"></i></div>
+        <div class="pinfo">
+          <span id="pcount">第 0 / 0 题</span>
+          <span id="modeTag" class="muted"></span>
+          <span id="timerSpan" class="timer hide"></span>
+        </div>
+        <div id="sheetCard" class="card hide" style="margin-top:12px">
+          <h2 style="font-size:14px;color:var(--sub);margin-bottom:10px">答题卡（点击题号可跳转）</h2>
+          <div class="sheet" id="sheet"></div>
+        </div>
+        <div id="qBody"></div>
+        <div class="nav">
+          <button class="btn btn-ghost btn-sm" id="prevBtn">← 上一题</button>
+          <button class="btn btn-ghost btn-sm hide" id="checkBtn">核对答案</button>
+          <button class="btn btn-primary btn-sm" id="nextBtn">下一题 →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结果 -->
+    <div id="result" class="hide">
+      <div class="card">
+        <div class="result-big">
+          <div class="muted" id="resTitle">练习完成</div>
+          <div class="score-num" id="resScore">0</div>
+          <div class="muted" id="resSub"></div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat"><div class="n" id="stTotal">0</div><div class="l">总题数</div></div>
+          <div class="stat"><div class="n" style="color:var(--ok)" id="stRight">0</div><div class="l">答对</div></div>
+          <div class="stat"><div class="n" style="color:var(--bad)" id="stWrong">0</div><div class="l">答错</div></div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-ghost" id="reviewWrong" style="flex:1">查看错题</button>
+          <button class="btn btn-primary" id="againBtn" style="flex:1">再来一次</button>
+        </div>
+        <div style="display:flex;margin-top:10px">
+          <button type="button" class="btn-quit" id="quitBtn2" style="flex:1;justify-content:center">退出 / 返回首页</button>
+        </div>
+        <div id="wrongWrap" class="hide" style="margin-top:16px">
+          <h2 style="font-size:14px;color:var(--sub);margin-bottom:10px">错题回顾</h2>
+          <div class="wrong-list" id="wrongList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 分组回顾弹层 -->
+<div class="modal hide" id="libModal">
+  <div class="modal-mask" id="libMask"></div>
+  <div class="modal-box">
+    <div class="modal-head"><span id="libTitle">错题集</span><button class="modal-x" id="libClose" type="button">✕</button></div>
+    <div class="modal-body" id="libBody"></div>
+  </div>
+</div>
+
+<!-- 导入弹层 -->
+<div class="modal hide" id="importModal">
+  <div class="modal-mask" id="importMask"></div>
+  <div class="modal-box">
+    <div class="modal-head"><span>导入题库</span><button class="modal-x" id="importClose" type="button">✕</button></div>
+    <div class="modal-body">
+      <div id="importPreview" style="margin-bottom:12px"></div>
+      <input id="bankName" class="field" placeholder="题库名称" style="margin-bottom:12px">
+      <button id="saveBankBtn" class="btn btn-primary" type="button" disabled>保存题库</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
