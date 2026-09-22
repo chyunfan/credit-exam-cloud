@@ -2,6 +2,7 @@ import {
   LS, loadArr, saveArr, addId, removeId, hasId, countId,
   clearProgress, saveProgress, loadProgress
 } from './store.js';
+import { supabase, getUserId } from './supabase.js';
 
 // ---------- data source (set per bank) ----------
 let QUESTIONS = [];
@@ -21,20 +22,107 @@ const TYPE_NAME = { single: '单选题', multiple: '多选题', judge: '判断�
 const TYPE_CLS = { single: 'b-single', multiple: 'b-multi', judge: 'b-judge', case: 'b-case' };
 
 function $(id) { return document.getElementById(id); }
-function saveSettings() {
-  try { localStorage.setItem('credit_exam_cfg', JSON.stringify(
-    { mode: S.mode, types: S.types, showAns: S.showAns, rmAll: S.rmAll, rmCorrectJudge: S.rmCorrectJudge, revealAfter: S.revealAfter, autoRemoveWrong: S.autoRemoveWrong,
-      examCounts: S.examCounts, examPoints: S.examPoints, examMin: S.examMin })); } catch (e) { }
+
+// ============================================================
+// 练习设置（练习选项 / 模式 / 组卷参数）：保存与恢复
+// ------------------------------------------------------------
+// 两层存储：
+//   ① 本地 localStorage —— 每次一改立即写入，离线也可用，刷新/退出后立刻还在；
+//   ② 云端 exam_user_prefs —— 登录后按账号跟随，换手机、换浏览器也是同一套设置。
+// 冲突判定：比较 updatedAt，谁新用谁。这样"离线时改过"的设置不会被云端旧值抹掉。
+// ============================================================
+const PREFS_KEY = 'credit_exam_cfg';
+
+function settingsSnapshot() {
+  return {
+    mode: S.mode, types: S.types, showAns: S.showAns, rmAll: S.rmAll,
+    rmCorrectJudge: S.rmCorrectJudge, revealAfter: S.revealAfter, autoRemoveWrong: S.autoRemoveWrong,
+    examCounts: S.examCounts, examPoints: S.examPoints, examMin: S.examMin,
+    updatedAt: Date.now()
+  };
 }
+
+function applySettings(c) {
+  S.mode = c.mode || 'sequential'; S.types = Object.assign(S.types, c.types || {});
+  S.showAns = !!c.showAns; S.rmAll = !!c.rmAll;
+  S.rmCorrectJudge = (c.rmCorrectJudge === undefined ? true : !!c.rmCorrectJudge); S.revealAfter = !!c.revealAfter;
+  S.autoRemoveWrong = (c.autoRemoveWrong === undefined ? true : !!c.autoRemoveWrong);
+  if (c.examCounts) S.examCounts = Object.assign(S.examCounts, c.examCounts);
+  if (c.examPoints) S.examPoints = Object.assign(S.examPoints, c.examPoints);
+  S.examMin = c.examMin || 90;
+}
+
+/** 改了就存：本地立即写，云端防抖 800ms */
+function saveSettings() {
+  const snap = settingsSnapshot();
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(snap)); } catch (e) { }
+  scheduleCloudSave(snap);
+}
+
 function loadSettings() {
-  try { const c = JSON.parse(localStorage.getItem('credit_exam_cfg')); if (c) {
-    S.mode = c.mode || 'sequential'; S.types = Object.assign(S.types, c.types || {});
-    S.showAns = !!c.showAns; S.rmAll = !!c.rmAll; S.rmCorrectJudge = (c.rmCorrectJudge === undefined ? true : !!c.rmCorrectJudge); S.revealAfter = !!c.revealAfter;
-    S.autoRemoveWrong = (c.autoRemoveWrong === undefined ? true : !!c.autoRemoveWrong);
-    if (c.examCounts) S.examCounts = Object.assign(S.examCounts, c.examCounts);
-    if (c.examPoints) S.examPoints = Object.assign(S.examPoints, c.examPoints);
-    S.examMin = c.examMin || 90;
-  } } catch (e) { }
+  try {
+    const c = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+    if (c) applySettings(c);
+  } catch (e) { }
+}
+
+let _cloudTimer = null;
+function scheduleCloudSave(snap) {
+  if (!getUserId()) return;                    // 未登录（本地练习）只写本地
+  if (_cloudTimer) clearTimeout(_cloudTimer);
+  _cloudTimer = setTimeout(() => { _cloudTimer = null; pushPrefs(snap); }, 800);
+}
+
+/** 让用户一眼看出设置存到了哪里（跟随账号 / 仅本机） */
+function setPrefsHint(text, ok) {
+  const el = $('prefsHint');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = ok ? 'var(--ok)' : 'var(--sub)';
+}
+
+async function pushPrefs(snap) {
+  try {
+    const { error } = await supabase.from('exam_user_prefs')
+      .upsert({ user_id: getUserId(), prefs: snap }, { onConflict: 'user_id' });
+    if (error) throw error;
+    setPrefsHint('改完自动记住（跟随账号）', true);
+  } catch (e) {
+    // 离线、或 exam_user_prefs 表还没建：本地已保存，不打断用户
+    setPrefsHint('改完自动记住（仅本机）', false);
+  }
+}
+
+/** 登录进入题库后调用：把本地与云端设置对齐（谁新用谁） */
+export async function syncPrefsFromCloud() {
+  const uid = getUserId();
+  if (!uid) return;
+  let cloud = null;
+  try {
+    const { data, error } = await supabase.from('exam_user_prefs').select('prefs').eq('user_id', uid).maybeSingle();
+    if (error) throw error;
+    cloud = (data && data.prefs) || null;
+  } catch (e) {
+    // 拉不到（离线/表未建）→ 保持本地现状，并如实告诉用户"只存本机"
+    setPrefsHint('改完自动记住（仅本机）', false);
+    return;
+  }
+  let local = null;
+  try { local = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null'); } catch (e) { }
+
+  const cloudAt = (cloud && cloud.updatedAt) || 0;
+  const localAt = (local && local.updatedAt) || 0;
+
+  if (cloud && cloudAt >= localAt) {
+    applySettings(cloud);                       // 云端较新 → 覆盖本地
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(cloud)); } catch (e) { }
+    applyUIFromState();
+    setPrefsHint('改完自动记住（跟随账号）', true);
+  } else if (local && localAt > cloudAt) {
+    pushPrefs(local);                           // 本地较新（如离线改过）→ 推上云
+  } else {
+    setPrefsHint('改完自动记住（跟随账号）', true);   // 两端都空/一致，账号同步可用
+  }
 }
 
 function updateMaxScore() {
@@ -503,6 +591,7 @@ function bindHome() {
     const exam = S.mode === 'exam';
     $('examCfg').classList.toggle('hide', !exam);
     if (exam) { $('examCfgBody').classList.add('hide'); $('examCfgArr').textContent = '▸'; }
+    saveSettings();
   }));
   $('examCfgHead').addEventListener('click', () => {
     const b = $('examCfgBody'); b.classList.toggle('hide');
@@ -510,12 +599,14 @@ function bindHome() {
   });
   document.querySelectorAll('#typeChips .chip').forEach(c => c.addEventListener('click', () => {
     const t = c.dataset.t; S.types[t] = !S.types[t]; c.classList.toggle('active', S.types[t]); updateFilterStat();
+    saveSettings();
   }));
-  $('showAns').addEventListener('change', e => { S.showAns = e.target.checked; });
-  $('rmAll').addEventListener('change', e => { S.rmAll = e.target.checked; updateFilterStat(); });
-  $('rmCorrectJudge').addEventListener('change', e => { S.rmCorrectJudge = e.target.checked; updateFilterStat(); });
-  $('revealAfter').addEventListener('change', e => { S.revealAfter = e.target.checked; });
-  $('autoRemoveWrong').addEventListener('change', e => { S.autoRemoveWrong = e.target.checked; });
+  // 练习选项：每一次切换都立即落盘（本地 + 云端），退出/刷新后原样恢复
+  $('showAns').addEventListener('change', e => { S.showAns = e.target.checked; saveSettings(); });
+  $('rmAll').addEventListener('change', e => { S.rmAll = e.target.checked; updateFilterStat(); saveSettings(); });
+  $('rmCorrectJudge').addEventListener('change', e => { S.rmCorrectJudge = e.target.checked; updateFilterStat(); saveSettings(); });
+  $('revealAfter').addEventListener('change', e => { S.revealAfter = e.target.checked; saveSettings(); });
+  $('autoRemoveWrong').addEventListener('change', e => { S.autoRemoveWrong = e.target.checked; saveSettings(); });
   $('wrongLibBtn').addEventListener('click', () => openLib('wrong'));
   $('favLibBtn').addEventListener('click', () => openLib('fav'));
   $('libClose').addEventListener('click', closeLib);
@@ -525,9 +616,9 @@ function bindHome() {
   document.querySelectorAll('.ec').forEach(inp => inp.addEventListener('change', e => {
     const t = e.target.dataset.t;
     const v = Math.max(0, Math.min(200, parseInt(e.target.value) || 0));
-    S.examCounts[t] = v; e.target.value = v; updateMaxScore();
+    S.examCounts[t] = v; e.target.value = v; updateMaxScore(); saveSettings();
   }));
-  $('examMin').addEventListener('change', e => { S.examMin = Math.max(5, Math.min(240, parseInt(e.target.value) || 90)); });
+  $('examMin').addEventListener('change', e => { S.examMin = Math.max(5, Math.min(240, parseInt(e.target.value) || 90)); saveSettings(); });
   $('startBtn').addEventListener('click', () => start());
 }
 function bindPractice() {

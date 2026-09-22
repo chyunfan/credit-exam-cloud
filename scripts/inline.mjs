@@ -13,9 +13,22 @@ if (!fs.existsSync(indexPath)) {
 
 let html = fs.readFileSync(indexPath, 'utf8');
 
+// 资源地址 → 本地文件路径
+// 兼容三种写法：
+//   './assets/x.js'                     （base: './'）
+//   '/assets/x.js'                      （base: '/'）
+//   '/credit-exam-cloud/assets/x.js'    （base: '/credit-exam-cloud/'，本项目的实际配置）
 function toLocal(href) {
-  const clean = href.replace(/^\.?\//, '');
-  return path.join(dist, clean);
+  const clean = String(href).replace(/^\.?\//, '');
+  const direct = path.join(dist, clean);
+  if (fs.existsSync(direct)) return direct;
+  // base 带子路径时，去掉第一段再试
+  const parts = clean.split('/');
+  if (parts.length > 1) {
+    const stripped = path.join(dist, parts.slice(1).join('/'));
+    if (fs.existsSync(stripped)) return stripped;
+  }
+  return direct;
 }
 
 // 1) 内联 <link rel="stylesheet">

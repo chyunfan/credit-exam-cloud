@@ -1,6 +1,6 @@
 import { initAuth, getSession, getUsername, logout } from './auth.js';
 import { initBanks, renderBanks, openBankById } from './banks.js';
-import { setQuestions, initEngine, refreshHomeUI } from './engine.js';
+import { setQuestions, initEngine, refreshHomeUI, syncPrefsFromCloud } from './engine.js';
 import { loadBankState } from './store.js';
 
 const APP_SCREENS = ['banks', 'home', 'practice', 'result'];
@@ -12,7 +12,10 @@ function showScreen(name) {
     return;
   }
   document.getElementById('auth').classList.add('hide');
-  document.getElementById('app').classList.remove('hide');
+  const app = document.getElementById('app');
+  app.classList.remove('hide');
+  // 答题中（练习/结果页）给 app 打标记：手机端会收起顶部应用栏，把屏幕留给题目
+  app.classList.toggle('in-practice', name === 'practice' || name === 'result');
   APP_SCREENS.forEach(s => {
     document.getElementById(s).classList.toggle('hide', s !== name);
   });
@@ -32,6 +35,8 @@ async function handleOpenBank({ id, name, questions }) {
   document.getElementById('topBankName').textContent = name;
   document.getElementById('topUser').textContent = getUsername() || '已登录';
   showScreen('home');
+  // 登录后按账号恢复上次的练习设置（练习选项/模式/组卷参数）；拉取失败不影响使用
+  await syncPrefsFromCloud();
   refreshHomeUI();
 }
 
